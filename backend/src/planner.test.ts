@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import seed from "../../docs/contract/seed.json" with { type: "json" };
 import type { Graph } from "../../docs/contract/types";
-import { bearing, findRoute, orientRoute, waypoints } from "./planner";
+import { bearing, buildPlan, findRoute, lengthM, orientRoute, splitAt } from "./planner";
 
 const graph = seed.graph as unknown as Graph;
 const ids = (path: ReturnType<typeof findRoute>) => path?.map((s) => s.edge._id);
@@ -40,12 +40,37 @@ describe("orientRoute", () => {
   });
 });
 
-describe("waypoints", () => {
+describe("buildPlan", () => {
   it("ends exactly at the destination and heads along each edge", () => {
-    const wps = waypoints(findRoute(graph, "RX1", "G1", { avoidKinds: [...noRunway.avoidKinds] })!, 25);
+    const { wps, legs } = buildPlan(findRoute(graph, "RX1", "G1", { avoidKinds: [...noRunway.avoidKinds] })!, 25);
+    expect(legs.map((l) => l.edge._id)).toEqual(["E1", "E6"]);
     expect(wps.at(-1)!.position).toEqual([-79.634, 43.67]);
     expect(wps.every((w) => Math.abs(w.heading - 180) < 1e-6)).toBe(true);
     expect(wps.length).toBeGreaterThan(30);
+    expect(wps.at(-1)!.leg).toBe(1);
+  });
+
+  it("can start part-way along an edge, in either direction", () => {
+    const e2 = graph.edges.find((e) => e._id === "E2")!;
+    const pos: [number, number] = [-79.633, 43.674];
+    const { before, after } = splitAt(e2.geometry.coordinates, pos);
+    expect(before).toEqual([[-79.634, 43.674], pos]);
+    expect(after).toEqual([pos, [-79.63, 43.674]]);
+    const back = buildPlan(findRoute(graph, "J1", "G1")!, 25, { line: [...before].reverse(), step: { edge: e2, forward: false } });
+    expect(back.legs.map((l) => l.edge._id)).toEqual(["E2", "E6"]);
+    expect(back.wps[0].heading).toBeCloseTo(270);
+    expect(back.wps.at(-1)!.position).toEqual([-79.634, 43.67]);
+  });
+
+  it("drops a zero-length first stretch", () => {
+    const e1 = graph.edges.find((e) => e._id === "E1")!;
+    const { before } = splitAt(e1.geometry.coordinates, [-79.634, 43.678]);
+    expect(before).toHaveLength(1);
+    expect(buildPlan([], 25, { line: before, step: { edge: e1, forward: false } }).legs).toEqual([]);
+  });
+
+  it("measures length in metres", () => {
+    expect(lengthM([[-79.634, 43.678], [-79.634, 43.674]])).toBeCloseTo(445, -1);
   });
 
   it("bearing is clockwise from north", () => {

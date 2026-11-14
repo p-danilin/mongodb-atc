@@ -16,30 +16,41 @@ npm test       # Vitest unit tests (planner)
 
 Brain uses port 4100 so it can run beside the mock (4000). Point Tower at it with `VITE_API_URL=http://localhost:4100`. Override with `PORT`, `TICK_MS`, `STEP_M`.
 
-## Level 0 (built)
+## Built so far
 
-`GET /api/graph`, `GET /api/state`, `POST /api/sim/start`, `POST /api/sim/reset`, `POST /api/flights`, and `/ws` with `vehicle.spawned`, `vehicle.moved` and `sim.reset`.
+**Level 0:** `GET /api/graph`, `GET /api/state`, `POST /api/sim/start`, `POST /api/sim/reset`, `POST /api/flights`, and `/ws` with `vehicle.spawned`, `vehicle.moved` and `sim.reset`.
+
+**Level 1:** `POST /api/zones`, `DELETE /api/zones/:id`, `GET /api/ledger?run_id=`, and `/ws` with `zone.created`, `zone.expired`, `zone.removed` and `ledger.appended`. A closure on a moving vehicle's remaining route reroutes it; with no clear route it holds position and resumes when a closure goes away.
 
 ```sh
 curl localhost:4100/api/state
-curl -XPOST localhost:4100/api/flights -H 'content-type: application/json' -d '{"gate":"G1"}'
+curl -XPOST localhost:4100/api/flights -H 'content-type: application/json' -d '{"gate":"G2"}'
+# close taxiway A between A1 and A2 for 60 s: the flight to Gate 2 reroutes via the apron
+curl -XPOST localhost:4100/api/zones -H 'content-type: application/json' -d '{"type":"closure","ttl_seconds":60,"reason":"Disabled aircraft on taxiway A","geometry":{"type":"Polygon","coordinates":[[[-79.6325,43.6735],[-79.6315,43.6735],[-79.6315,43.6745],[-79.6325,43.6745],[-79.6325,43.6735]]]}}'
+curl localhost:4100/api/ledger
 curl -XPOST localhost:4100/api/sim/reset
 npx wscat -c ws://localhost:4100/ws
 ```
 
 ## How it works
 
-- The API and the sim only **write to Mongo**. Nothing is sent to the websocket directly.
-- `src/stream.ts` watches one database-level change stream and relays each change as a contract event, so the map shows what the database says. One stream gives a total order across collections.
+- The API and the sim only **write to Mongo**. `src/stream.ts` watches one database-level change stream and relays each change as a contract event, so the map shows what the database says. One stream gives a total order across collections.
 - `src/sim.ts` advances each moving vehicle one waypoint per tick and writes its position.
-- `src/planner.ts` is the deterministic shortest-path planner (pure functions, unit tested).
-- `src/world.ts` holds the scenario operations (spawn, reset, snapshot). A reset opens a new run (`R-2`, `R-3`, ...) and keeps the old ones.
+- `src/planner.ts` is the deterministic shortest-path planner, including plans that start part-way along an edge (pure functions, unit tested).
+- `src/world.ts` holds the scenario operations: spawn, zones, replanning, reset, snapshot. A reset opens a new run (`R-2`, `R-3`, ...) and keeps the old runs and their ledgers.
+- `src/ledger.ts` appends to the insert-only `ledger`, numbered per run.
 - `src/seed.ts` creates the 2dsphere indexes, the TTL index on `zones.expires_at`, the `$jsonSchema` validator on `actions`, and pre/post images on `vehicles` and `zones`.
 
-## Layout for the next levels
+### Closures
 
-- **Level 1:** zone endpoints in `server.ts`; `zones` events in `stream.ts`; pass closed edges to `findRoute` via `avoidEdges` (found with `$geoIntersects`).
-- **Level 2:** the policy gate in front of `sim.follow`, `actions` and `ledger` writes, approvals, halt and resume, the red-team endpoint, then the LLM controller.
+- **Geo check.** `$geoIntersects` finds the edges a new zone's polygon touches. For the edge a vehicle is on, the stretch ahead of it (and the stretch behind) is checked against `zones` the other way round, so a closure behind a vehicle does not stop it.
+- **Replan.** The vehicle either carries on to the end of its edge or turns back, whichever is clear and shorter. The new `route` is written to the vehicle (a `vehicle.moved`) with a `route.replanned` ledger entry.
+- **Expiry.** A zone stops applying at `expires_at`. Mongo's TTL monitor deletes the document, but it only sweeps about once a minute, so the server sends `zone.expired` on time and the later TTL delete is silent. This is the one event not driven by a database change. `GET /api/state` returns only zones still in force.
+- **Bad polygons** are refused by the 2dsphere index on insert and come back as `400`.
+
+## Next
+
+**Level 2:** the policy gate in front of every route, `actions` records, approvals, halt and resume, the red-team endpoint, then the LLM controller. Runway crossings are refused outright until then, so Gates 5 and 6 return `409 no_route`.
 
 ## Atlas notes
 

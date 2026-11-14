@@ -1,9 +1,12 @@
-import type { Graph, NodeId } from "../../docs/contract/types";
+import type { Position } from "../../docs/contract/types";
 import { config } from "./config";
 import type { Database, Doc } from "./db";
-import { distM, orientRoute, waypoints, type Step, type Waypoint } from "./planner";
+import type { Plan, Step } from "./planner";
 
-interface Track { wps: Waypoint[]; i: number }
+interface Track extends Plan { i: number; position: Position; paused: boolean }
+
+/** Where a vehicle is on its plan: the edge it is on (or about to enter) and the edges after it. */
+export interface Where { position: Position; leg: Step; remaining: Step[] }
 
 /**
  * The simulation tick. Each tick advances every moving vehicle one waypoint and writes the new
@@ -14,7 +17,7 @@ export class Sim {
   private timer: NodeJS.Timeout | null = null;
   private ticking: Promise<void> | null = null;
 
-  constructor(private database: Database, private graph: Graph) {}
+  constructor(private database: Database) {}
 
   start() {
     if (this.timer) return;
@@ -30,10 +33,27 @@ export class Sim {
     await this.ticking;
   }
 
-  /** Start moving a vehicle along a path. Replaces any path it was on. */
-  follow(vehicleId: string, path: Step[]) {
-    this.tracks.set(vehicleId, { wps: waypoints(path, config.stepM), i: 0 });
+  /** Start moving a vehicle along a plan from `position`, replacing any plan it was on. `i` skips waypoints already passed. */
+  follow(vehicleId: string, plan: Plan, position: Position, i = 0) {
+    if (i >= plan.wps.length) { this.tracks.delete(vehicleId); return; }
+    this.tracks.set(vehicleId, { ...plan, i, position, paused: false });
   }
+
+  ids() { return [...this.tracks.keys()]; }
+
+  where(vehicleId: string): Where | null {
+    const t = this.tracks.get(vehicleId);
+    if (!t) return null;
+    const leg = t.wps[t.i].leg;
+    return { position: t.position, leg: t.legs[leg], remaining: t.legs.slice(leg + 1) };
+  }
+
+  /** Hold a vehicle where it is while its route is being replanned. `follow` or `unpause` releases it. */
+  pause(vehicleId: string) { const t = this.tracks.get(vehicleId); if (t) t.paused = true; }
+  unpause(vehicleId: string) { const t = this.tracks.get(vehicleId); if (t) t.paused = false; }
+
+  /** Stop tracking a vehicle (it stays where it is). */
+  drop(vehicleId: string) { this.tracks.delete(vehicleId); }
 
   /** Forget every track and wait for an in-flight tick, so no position write lands after this returns. */
   async clear() {
@@ -41,28 +61,14 @@ export class Sim {
     await this.ticking;
   }
 
-  /** After a restart, pick up vehicles that were mid-taxi from where Mongo says they are. */
-  async resume() {
-    const moving = await this.database.col.vehicles.find({ status: "moving", "route.0": { $exists: true } }).toArray();
-    for (const v of moving) {
-      const end: NodeId | undefined = v.details?.gate;
-      const path = end ? orientRoute(this.graph, v.route, end) : null;
-      if (!path) continue;
-      const wps = waypoints(path, config.stepM);
-      let i = 0;
-      for (let k = 1; k < wps.length; k++) if (distM(wps[k].position, v.position.coordinates) < distM(wps[i].position, v.position.coordinates)) i = k;
-      this.tracks.set(v._id, { wps, i: i + 1 });
-    }
-    return moving.length;
-  }
-
   private async tick() {
     const writes: Promise<unknown>[] = [];
     for (const [id, t] of this.tracks) {
+      if (t.paused) continue;
       const w = t.wps[t.i++];
+      t.position = w.position;
       const done = t.i >= t.wps.length;
       if (done) this.tracks.delete(id);
-      if (!w) continue;
       const set: Partial<Doc> = { position: { type: "Point", coordinates: w.position }, heading: w.heading, ts: new Date() };
       if (done) { set.status = "idle"; set.route = []; }
       writes.push(this.database.col.vehicles.updateOne({ _id: id }, { $set: set }));

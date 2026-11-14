@@ -2,6 +2,7 @@ import type { ChangeStream, ChangeStreamDocument, ResumeToken } from "mongodb";
 import type { Database, Doc } from "./db";
 import { wire } from "./db";
 import type { Hub } from "./hub";
+import type { World } from "./world";
 
 /**
  * Relays Mongo change-stream events to the websocket, so the map shows what the database says.
@@ -10,7 +11,7 @@ import type { Hub } from "./hub";
  * a reset's vehicle deletes always arrive before the new run's insert, so `sim.reset` can never be
  * overtaken by a stale `vehicle.moved`.
  */
-export function startRelay(database: Database, hub: Hub) {
+export function startRelay(database: Database, hub: Hub, world: World) {
   let stream: ChangeStream<Doc> | null = null;
   let token: ResumeToken | undefined;
   let stopped = false;
@@ -29,8 +30,17 @@ export function startRelay(database: Database, hub: Hub) {
       // A new run document is a scenario reset; a status change on the current one is the kill switch.
       if (op === "insert" && doc) hub.emit("sim.reset", doc);
       else if ((op === "update" || op === "replace") && doc) hub.emit(doc.status === "halted" ? "run.halted" : "run.resumed", doc);
+    } else if (coll === "zones") {
+      if (op === "insert" && doc) hub.emit("zone.created", doc);
+      else if (op === "delete") {
+        // Removed early, removed by TTL, or already announced (see World.zoneDeleted).
+        const type = world.zoneDeleted(String(ev.documentKey._id));
+        if (type) hub.emit(type, { _id: String(ev.documentKey._id) });
+      }
+    } else if (coll === "ledger") {
+      if (op === "insert" && doc) hub.emit("ledger.appended", doc);
     }
-    // Level 1 adds zones (created / expired / removed); Level 2 adds actions, approvals and ledger.
+    // Level 2 adds actions and approvals.
   }
 
   function open() {
