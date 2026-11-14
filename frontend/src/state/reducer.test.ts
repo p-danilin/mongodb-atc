@@ -65,3 +65,36 @@ describe("reducer", () => {
     expect(applyMessage(initialState, msg({ type: "run.resumed", data: run, seq: 42 })).seq).toBe(42);
   });
 });
+
+describe("pending approvals order", () => {
+  const a = (id: string, ts: string) => ({ ...action, _id: id, ts }) as Action;
+  it("puts a new request on top", () => {
+    let s = applySnapshot(initialState, { ...snap, pending_approvals: [] });
+    s = applyMessage(s, msg({ type: "approval.requested", data: a("A-1", "t1") }));
+    s = applyMessage(s, msg({ type: "approval.requested", data: a("A-2", "t2") }));
+    expect(s.pendingApprovals.map((x) => x._id)).toEqual(["A-2", "A-1"]);
+  });
+  it("does not move a request that is announced twice", () => {
+    let s = applySnapshot(initialState, { ...snap, pending_approvals: [] });
+    for (const id of ["A-1", "A-2", "A-1"]) s = applyMessage(s, msg({ type: "approval.requested", data: a(id, "t") }));
+    expect(s.pendingApprovals.map((x) => x._id)).toEqual(["A-2", "A-1"]);
+  });
+  it("shows the snapshot newest first", () => {
+    const s = applySnapshot(initialState, { ...snap, pending_approvals: [a("A-1", "2026-01-01T00:00:01Z"), a("A-2", "2026-01-01T00:00:02Z")] });
+    expect(s.pendingApprovals.map((x) => x._id)).toEqual(["A-2", "A-1"]);
+  });
+  it("removes a resolved request and keeps the order", () => {
+    let s = applySnapshot(initialState, { ...snap, pending_approvals: [a("A-1", "2026-01-01T00:00:01Z"), a("A-2", "2026-01-01T00:00:02Z"), a("A-3", "2026-01-01T00:00:03Z")] });
+    s = applyMessage(s, msg({ type: "approval.resolved", data: { _id: "r", run_id: "R-1", resolves: "A-2", decision: "approve", resolved_by: "s", ts: "t" } }));
+    expect(s.pendingApprovals.map((x) => x._id)).toEqual(["A-3", "A-1"]);
+  });
+});
+
+describe("run status", () => {
+  it("halted and resumed replace the run", () => {
+    const h = applyMessage(initialState, msg({ type: "run.halted", data: { ...run, status: "halted", halted_by: "supervisor-1", halted_at: "t" } }));
+    expect(h.run.status).toBe("halted");
+    expect(h.run.halted_by).toBe("supervisor-1");
+    expect(applyMessage(h, msg({ type: "run.resumed", data: run })).run.status).toBe("running");
+  });
+});

@@ -6,14 +6,11 @@ export const ROOT = path.resolve(import.meta.dirname, "../..");
 // Credentials live in the repo-level .env (gitignored). Real environment variables win.
 try { process.loadEnvFile(path.join(ROOT, ".env")); } catch { /* no .env: rely on the environment */ }
 
-function required(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`${name} is not set. Copy .env.example to .env at the repo root and fill it in.`);
-  return v;
-}
+/** `docker compose up -d --wait` at the repo root starts this (a single-node replica set; change streams need one). */
+export const LOCAL_MONGODB_URI = "mongodb://localhost:27017/?replicaSet=rs0&directConnection=true";
 
 export const config = {
-  mongoUri: required("MONGODB_URI"),
+  mongoUri: process.env.MONGODB_URI || LOCAL_MONGODB_URI,
   dbName: process.env.MONGODB_DB || "ground_control",
   /** The mock uses 4000; Brain defaults to 4100 so both can run side by side. */
   port: Number(process.env.PORT ?? 4100),

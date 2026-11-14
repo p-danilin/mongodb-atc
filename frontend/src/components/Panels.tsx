@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from "react";
-import { PlaneTakeoffIcon, RotateCcwIcon, OctagonIcon, PlayIcon } from "lucide-react";
+import { PlaneTakeoffIcon, RotateCcwIcon, OctagonIcon, PlayIcon, ShieldAlertIcon, XIcon } from "lucide-react";
 import { api } from "../lib/api";
-import { useSelector } from "../state/store";
+import { redTeamControl, spawnControl } from "../lib/controls";
+import { store, useSelector } from "../state/store";
 import type { ConnectionStatus } from "../lib/sync";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,21 +32,64 @@ export function RunStatus() {
   );
 }
 
-/** Halt and resume are visible from day one so the screen structure is settled; they work at Level 2. */
-export function RunControls() {
-  const disabledButton = (label: string, icon: ReactNode) => (
+/** Wraps a possibly disabled button so the reason shows on hover and keyboard focus. */
+function WithReason({ reason, children }: { reason?: string; children: ReactNode }) {
+  if (!reason) return <>{children}</>;
+  return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <span tabIndex={0}><Button variant="outline" size="sm" disabled>{icon}{label}</Button></span>
-      </TooltipTrigger>
-      <TooltipContent>Kill switch arrives at Level 2</TooltipContent>
+      <TooltipTrigger asChild><span tabIndex={0}>{children}</span></TooltipTrigger>
+      <TooltipContent>{reason}</TooltipContent>
     </Tooltip>
   );
+}
+
+/** One kill switch: Halt while running, Resume while halted. No confirmation. Red team sits beside it. */
+export function RunControls() {
+  const run = useSelector((s) => s.run, (a, b) => a === b);
+  const vehicles = useSelector((s) => s.vehicles);
+  const zones = useSelector((s) => s.zones);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const halted = run.status === "halted";
+  const red = redTeamControl(run, vehicles, zones);
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true); setMsg(null);
+    try { await fn(); } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
+  };
   return (
     <div className="flex items-center gap-2" data-testid="run-controls">
-      {disabledButton("Halt", <OctagonIcon data-icon="inline-start" />)}
-      {disabledButton("Resume", <PlayIcon data-icon="inline-start" />)}
+      {msg && <span role="alert" className="max-w-64 truncate text-sm text-destructive" title={msg}>{msg}</span>}
+      <WithReason reason={red.reason}>
+        <Button variant="outline" size="sm" disabled={!red.enabled || busy}
+          onClick={() => act(async () => store.setRedTeamAlert(await api.redTeam()))}>
+          <ShieldAlertIcon data-icon="inline-start" />Red team
+        </Button>
+      </WithReason>
+      {halted ? (
+        <Button size="sm" disabled={busy} onClick={() => act(api.resume)}><PlayIcon data-icon="inline-start" />Resume</Button>
+      ) : (
+        <Button size="sm" variant="destructive" disabled={busy} onClick={() => act(api.halt)}><OctagonIcon data-icon="inline-start" />Halt</Button>
+      )}
     </div>
+  );
+}
+
+/** Persistent proof of a red-team denial, built from the Action the button got back. */
+export function RedTeamAlert() {
+  const action = useSelector((s) => s.redTeamAlert);
+  if (!action) return null;
+  return (
+    <Card size="sm" role="alert" data-testid="redteam-alert" className="border-red-300 bg-red-50">
+      <CardHeader>
+        <CardTitle className="text-red-900">Red team route refused</CardTitle>
+        <Button variant="ghost" size="icon-sm" aria-label="Dismiss" onClick={() => store.setRedTeamAlert(null)}><XIcon /></Button>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-1 text-sm">
+        <p>Denied by <span className="font-mono font-medium">{action.policy_ids.join(", ")}</span>: {action.reason}</p>
+        <p className="text-muted-foreground">Recorded as <span className="font-mono">{action._id}</span></p>
+        <div><Button size="sm" variant="outline" onClick={() => store.showInFeed(action._id)}>Show in feed</Button></div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -53,6 +97,7 @@ export function ScenarioCard({ gates }: { gates: { id: string; name: string }[] 
   const [gate, setGate] = useState("G1");
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const spawn = spawnControl(useSelector((s) => s.run, (a, b) => a === b));
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true); setMsg(null);
     try { await fn(); } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
@@ -73,9 +118,11 @@ export function ScenarioCard({ gates }: { gates: { id: string; name: string }[] 
               </SelectGroup>
             </SelectContent>
           </Select>
-          <Button disabled={busy} onClick={() => act(() => api.spawnFlight({ gate }))}>
-            <PlaneTakeoffIcon data-icon="inline-start" />Spawn flight
-          </Button>
+          <WithReason reason={spawn.reason}>
+            <Button disabled={busy || !spawn.enabled} onClick={() => act(() => api.spawnFlight({ gate }))}>
+              <PlaneTakeoffIcon data-icon="inline-start" />Spawn flight
+            </Button>
+          </WithReason>
           <Button variant="outline" disabled={busy} onClick={() => act(api.reset)}>
             <RotateCcwIcon data-icon="inline-start" />Reset
           </Button>
@@ -97,6 +144,11 @@ export function LegendCard() {
     { label: "Runway", swatch: <Swatch><rect x="0" y="2" width="36" height="12" fill="var(--map-runway)" /><line x1="3" y1="8" x2="33" y2="8" stroke="#f4f6f8" strokeWidth="1.5" strokeDasharray="6 4" /></Swatch> },
     { label: "Hold short, needs approval", swatch: <Swatch><line x1="18" y1="1" x2="18" y2="15" stroke="var(--map-hold)" strokeWidth="3" /></Swatch> },
     { label: "Planned route", swatch: <Swatch><line x1="0" y1="8" x2="36" y2="8" stroke="var(--map-route)" strokeWidth="5" strokeLinecap="round" /></Swatch> },
+    { label: "Proposed, needs approval", swatch: <Swatch><line x1="0" y1="8" x2="36" y2="8" stroke="var(--map-pending)" strokeWidth="5" strokeLinecap="round" strokeDasharray="8 6" /></Swatch> },
+    { label: "Closure", swatch: <Swatch><rect x="2" y="2" width="32" height="12" rx="3" fill="var(--map-closure)" fillOpacity="0.3" stroke="var(--map-closure)" strokeWidth="2" strokeDasharray="5 3" /></Swatch> },
+    { label: "Waiting for approval", swatch: <Swatch><circle cx="18" cy="8" r="6" fill="#1d5fd8" /><circle cx="18" cy="8" r="7.5" fill="none" stroke="var(--map-pending)" strokeWidth="2" /></Swatch> },
+    { label: "Route denied (flash)", swatch: <Swatch><circle cx="18" cy="8" r="6" fill="#1d5fd8" /><circle cx="18" cy="8" r="7.5" fill="var(--map-closure)" fillOpacity="0.35" stroke="var(--map-closure)" strokeWidth="2" /></Swatch> },
+    { label: "Halted", swatch: <Swatch><circle cx="18" cy="8" r="6" fill="#8d959d" opacity="0.7" /></Swatch> },
     { label: "Gate", swatch: <Swatch><rect x="6" y="1" width="24" height="14" rx="3" fill="#16202b" /></Swatch> },
   ];
   return (
@@ -111,13 +163,10 @@ export function LegendCard() {
   );
 }
 
-export function EmptyState({ title, body, level }: { title: string; body: string; level: string }) {
+export function EmptyState({ title, body }: { title: string; body: string }) {
   return (
     <div className="flex flex-col items-start gap-1 rounded-md border border-dashed bg-muted/40 p-3">
-      <div className="flex items-center gap-2">
-        <span className="text-sm font-medium">{title}</span>
-        <Badge variant="outline">{level}</Badge>
-      </div>
+      <span className="text-sm font-medium">{title}</span>
       <p className="text-sm text-muted-foreground">{body}</p>
     </div>
   );

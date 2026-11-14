@@ -86,6 +86,8 @@
     --map-centerline: #e5b300;
     --map-route: #1d5fd8;
     --map-hold: #d2412e;
+    --map-pending: #d99200;
+    --map-closure: #d2412e;
 }
 
 
@@ -106,6 +108,14 @@
 .map-sign { font: 500 12px var(--font-mono); fill: #16202b; }
 .map-gate { font: 500 11px var(--font-mono); fill: #ffffff; }
 .map-runway-num { font: 500 20px var(--font-mono); fill: #f4f6f8; }
+.map-closure-label { font: 600 11.5px var(--font-mono); fill: var(--map-closure); }
+/* A halted run: vehicles are greyed and still. */
+[data-vehicle][data-status="halted"] .sprite { filter: grayscale(1); opacity: 0.55; }
+/* The approvals count pulses once when it goes up. */
+.badge-bump { animation: badge-bump 700ms ease-out 1; }
+@keyframes badge-bump { 0% { box-shadow: 0 0 0 0 var(--map-pending); transform: scale(1.35); } 100% { box-shadow: 0 0 0 10px transparent; transform: scale(1); } }
+.row-flash { animation: row-flash 1.6s ease-out 1; }
+@keyframes row-flash { 0%, 60% { background-color: color-mix(in oklab, var(--map-pending) 35%, transparent); } }
 .map-callsign { font: 500 11.5px var(--font-mono); fill: #16202b; }
 
 /* Planned route: dashes drift along the direction of the edge geometry. */
@@ -113,7 +123,7 @@
 @keyframes route-flow { to { stroke-dashoffset: -22; } }
 .label-in { animation: label-in 260ms ease-out both; }
 @keyframes label-in { from { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .route-flow, .label-in { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .route-flow, .label-in, .badge-bump, .row-flash { animation: none; } }
 
 html, body, #root { height: 100%; }
 body { margin: 0; overflow: hidden; }

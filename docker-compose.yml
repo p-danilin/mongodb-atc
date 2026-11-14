@@ -1,0 +1,26 @@
+# Local MongoDB for development: `docker compose up -d --wait`
+# Brain needs a replica set (change streams, pre/post images), so this is a single-node one.
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: atc-mongo
+    ports:
+      - "127.0.0.1:27017:27017"
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    volumes:
+      - atc-mongo-data:/data/db
+    healthcheck:
+      # Initiates the replica set on first run, then reports healthy once this node is primary.
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - "try { rs.status() } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}) }; if (!db.hello().isWritablePrimary) quit(1)"
+      interval: 2s
+      timeout: 10s
+      retries: 30
+      start_period: 2s
+
+volumes:
+  atc-mongo-data:

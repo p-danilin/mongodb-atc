@@ -1,7 +1,7 @@
-import type { Graph, Run, Snapshot, SpawnFlightRequest, Vehicle, WsMessage } from "@contract/types";
+import type { Action, ActionId, CreateZoneRequest, Graph, LedgerEntry, RunId, Zone, ResolveApprovalRequest, Resolution, Run, Snapshot, SpawnFlightRequest, Vehicle, WsMessage } from "@contract/types";
 import type { Transport } from "./sync";
 
-export const API_URL: string = (import.meta.env.VITE_API_URL ?? "http://localhost:4000").replace(/\/$/, "");
+export const API_URL: string = (import.meta.env.VITE_API_URL ?? "http://localhost:4100").replace(/\/$/, "");
 export const WS_URL = API_URL.replace(/^http/, "ws") + "/ws";
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -23,6 +23,14 @@ export const api = {
   start: () => request<Run>("POST", "/api/sim/start"),
   reset: () => request<Run>("POST", "/api/sim/reset"),
   spawnFlight: (req: SpawnFlightRequest) => request<Vehicle>("POST", "/api/flights", req),
+  createZone: (req: CreateZoneRequest) => request<Zone>("POST", "/api/zones", req),
+  removeZone: (id: string) => request<void>("DELETE", `/api/zones/${encodeURIComponent(id)}`),
+  halt: () => request<Run>("POST", "/api/run/halt", {}),
+  resume: () => request<Run>("POST", "/api/run/resume"),
+  redTeam: () => request<Action>("POST", "/api/redteam/bad-route"),
+  ledger: (runId: RunId) => request<LedgerEntry[]>("GET", `/api/ledger?run_id=${encodeURIComponent(runId)}`),
+  /** `id` is the action id, not an approval id. */
+  resolveApproval: (id: ActionId, req: ResolveApprovalRequest) => request<Resolution>("POST", `/api/approvals/${encodeURIComponent(id)}`, req),
 };
 
 export const browserTransport: Transport = {

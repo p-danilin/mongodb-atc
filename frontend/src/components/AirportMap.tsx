@@ -1,8 +1,13 @@
-import { memo, useEffect, useMemo } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Graph, GraphEdge, GraphNode, VehicleKind, VehicleStatus } from "@contract/types";
 import { makeProjection, type Projection } from "../lib/projection";
 import { createMotionController } from "../lib/motionController";
+import { orientedRoute } from "../lib/routeGeometry";
+import { closureOctagon, closureReason } from "../lib/closureGeometry";
+import { api } from "../lib/api";
 import { store, useSelector } from "../state/store";
+import { ClosureLayer } from "./ClosureLayer";
+import { ClosureControls, HaltBanner } from "./MapOverlays";
 
 type XY = [number, number];
 
@@ -189,6 +194,21 @@ interface VehicleMeta { id: string; kind: VehicleKind; route: string[]; status: 
 const metaEqual = (a: VehicleMeta[], b: VehicleMeta[]) =>
   a.length === b.length && a.every((m, i) => m.id === b[i].id && m.kind === b[i].kind && m.status === b[i].status && m.callsign === b[i].callsign && m.route.join() === b[i].route.join());
 
+/** Amber ring (awaiting approval) and red flash (denied). The motion loop sets their opacity by reference. */
+function VehicleFx({ id, controller }: { id: string; controller: ReturnType<typeof createMotionController> }) {
+  const ring = useRef<SVGCircleElement>(null), flash = useRef<SVGCircleElement>(null);
+  useEffect(() => {
+    controller.attachFx(id, { ring: ring.current!, flash: flash.current! });
+    return () => controller.attachFx(id, null);
+  }, [id, controller]);
+  return (
+    <g pointerEvents="none">
+      <circle ref={ring} r="26" fill="none" stroke="var(--map-pending)" strokeWidth="4" opacity="0" />
+      <circle ref={flash} r="24" fill="var(--map-closure)" fillOpacity="0.35" stroke="var(--map-closure)" strokeWidth="4" opacity="0" />
+    </g>
+  );
+}
+
 export function AirportMap({ graph }: { graph: Graph }) {
   const projection = useMemo(() => makeProjection(graph.bounds, { padding: PAD }), [graph]);
   const controller = useMemo(() => createMotionController(store, projection), [projection]);
@@ -201,22 +221,39 @@ export function AirportMap({ graph }: { graph: Graph }) {
     })),
     metaEqual,
   );
+  const pending = useSelector(
+    (s) => s.pendingApprovals.map((a) => ({ id: a._id, edges: a.payload.edges })),
+    (a, b) => a.length === b.length && a.every((p, i) => p.id === b[i].id && p.edges.join() === b[i].edges.join()),
+  );
+  const highlighted = useSelector((s) => s.highlightedApproval);
   const edgeById = useMemo(() => new Map(graph.edges.map((e) => [e._id, e])), [graph]);
+  const dropMode = useSelector((s) => s.dropMode);
+  const [dropError, setDropError] = useState<string | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
   const [x, y, w, h] = projection.viewBox;
+
+  const drop = async (e: React.MouseEvent<SVGSVGElement>) => {
+    const svg = svgRef.current, m = svg?.getScreenCTM();
+    if (!svg || !m) return;
+    const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+    const click = projection.toLonLat([pt.x, pt.y]);
+    setDropError(null);
+    try {
+      await api.createZone({ type: "closure", geometry: closureOctagon(click, projection), ttl_seconds: store.getState().ttlSeconds, reason: closureReason(click, graph.edges) });
+    } catch (err) { setDropError((err as Error).message); }
+  };
+
   return (
-    <svg className="size-full" viewBox={`${x} ${y} ${w} ${h}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Airport diagram">
+    <div className="relative size-full">
+    <HaltBanner />
+    <ClosureControls message={dropError} clearMessage={() => setDropError(null)} />
+    <svg ref={svgRef} className="size-full" style={dropMode ? { cursor: "crosshair" } : undefined}
+      onClick={dropMode ? drop : () => store.selectZone(null)} viewBox={`${x} ${y} ${w} ${h}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Airport diagram">
       <BaseLayer graph={graph} projection={projection} />
       <g className="routes" fill="none" strokeLinecap="round" strokeLinejoin="round">
         {metas.flatMap((m) =>
-          m.route.map((eid, i) => {
-            const e = edgeById.get(eid);
-            if (!e) return null;
-            // Orient each edge in the direction of travel so the dashes flow the right way.
-            const next = edgeById.get(m.route[i + 1]);
-            const prev = edgeById.get(m.route[i - 1]);
-            const forward = next ? e.to === next.from || e.to === next.to : prev ? e.from === prev.from || e.from === prev.to : true;
-            const coords = forward ? e.geometry.coordinates : [...e.geometry.coordinates].reverse();
-            const points = coords.map((c) => projection.toSvg(c as [number, number]).join(",")).join(" ");
+          orientedRoute(m.route, edgeById).map(({ id: eid, coords }) => {
+            const points = coords.map((c) => projection.toSvg(c).join(",")).join(" ");
             return (
               <g key={`${m.id}-${eid}`} data-route={m.id}>
                 <polyline points={points} stroke="var(--map-route)" strokeWidth="6" strokeOpacity="0.9" />
@@ -226,10 +263,33 @@ export function AirportMap({ graph }: { graph: Graph }) {
           }),
         )}
       </g>
+      {/* Routes the policy gate marked needs-approval: proposed, not yet cleared to move. */}
+      <g className="pending-routes" fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {pending.flatMap((p) =>
+          orientedRoute(p.edges, edgeById).map(({ id: eid, coords }) => {
+            const points = coords.map((c) => projection.toSvg(c).join(",")).join(" ");
+            const on = p.id === highlighted;
+            return (
+              <polyline
+                key={`${p.id}-${eid}`}
+                data-pending-route={p.id}
+                data-highlighted={on || undefined}
+                points={points}
+                stroke="var(--map-pending)"
+                strokeWidth={on ? 9 : 6}
+                strokeOpacity={on ? 1 : 0.75}
+                strokeDasharray="10 8"
+              />
+            );
+          }),
+        )}
+      </g>
+      <ClosureLayer projection={projection} />
       <g className="vehicles">
         {metas.map((m) => (
-          <g key={m.id} data-vehicle={m.id} ref={(el) => controller.attach(m.id, el)}>
-            <Sprite kind={m.kind} />
+          <g key={m.id} data-vehicle={m.id} data-status={m.status} ref={(el) => controller.attach(m.id, el)}>
+            <VehicleFx id={m.id} controller={controller} />
+            <g className="sprite"><Sprite kind={m.kind} /></g>
           </g>
         ))}
       </g>
@@ -245,5 +305,6 @@ export function AirportMap({ graph }: { graph: Graph }) {
         ))}
       </g>
     </svg>
+    </div>
   );
 }

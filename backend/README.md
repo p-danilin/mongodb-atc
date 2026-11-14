@@ -4,7 +4,7 @@ Node + TypeScript, the MongoDB Node driver and `ws`. Serves the contract in `doc
 
 ## Run
 
-Needs `MONGODB_URI` (and optionally `MONGODB_DB`) in the repo-level `.env`.
+Needs MongoDB as a replica set. Start the local one from the repo root with `docker compose up -d --wait` (see the root README). With no `.env`, Brain uses it. To use Atlas, set `MONGODB_URI` (and optionally `MONGODB_DB`) in the repo-level `.env`.
 
 ```sh
 cd backend
@@ -14,7 +14,9 @@ npm run dev    # Brain on http://localhost:4100, restarts on change
 npm test       # Vitest unit tests (planner)
 ```
 
-Brain uses port 4100 so it can run beside the mock (4000). Point Tower at it with `VITE_API_URL=http://localhost:4100`. Override with `PORT`, `TICK_MS`, `STEP_M`.
+Brain listens on port 4100, which is Tower's default API URL. Override with `PORT`, `TICK_MS`, `STEP_M`.
+
+Re-run `npm run seed` after pulling Brain changes. The policies live in the database, so if they are missing the policy gate allows everything. `node scripts/e2e-levels-1-2.mjs` (repo root) checks Levels 1 and 2 against a running Brain and says so if the policies are missing.
 
 ## Built so far
 
