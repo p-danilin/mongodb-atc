@@ -33,8 +33,8 @@ curl -XPOST $B/api/flights -H "$J" -d '{"gate":"G2"}'        # denied (gate occu
 curl -XPOST $B/api/flights -H "$J" -d '{"gate":"G5"}'        # needs approval: Gate 5 is across the runway
 curl "$B/api/approvals?status=pending"
 curl -XPOST $B/api/approvals/A-0003 -H "$J" -d '{"decision":"approve","note":"runway clear"}'
-# close taxiway A between A1 and A2 for 60 s: anything routed along it reroutes
-curl -XPOST $B/api/zones -H "$J" -d '{"type":"closure","ttl_seconds":60,"reason":"Disabled aircraft on taxiway A","geometry":{"type":"Polygon","coordinates":[[[-79.6325,43.6735],[-79.6315,43.6735],[-79.6315,43.6745],[-79.6325,43.6745],[-79.6325,43.6735]]]}}'
+# close taxiway A between T2 and T3 for 60 s: anything routed along it reroutes
+curl -XPOST $B/api/zones -H "$J" -d '{"type":"closure","ttl_seconds":60,"reason":"Disabled aircraft on taxiway A","geometry":{"type":"Polygon","coordinates":[[[-79.6325,43.6757],[-79.6315,43.6757],[-79.6315,43.6767],[-79.6325,43.6767],[-79.6325,43.6757]]]}}'
 curl -XPOST $B/api/redteam/bad-route                          # a route through the closure: denied and recorded
 curl -XPOST $B/api/run/halt -H "$J" -d '{"reason":"demo"}'    # everything freezes
 curl -XPOST $B/api/run/resume

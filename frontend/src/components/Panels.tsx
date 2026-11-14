@@ -106,7 +106,7 @@ export function ScenarioCard({ gates }: { gates: { id: string; name: string }[] 
     <Card size="sm">
       <CardHeader>
         <CardTitle>Scenario</CardTitle>
-        <CardDescription>Send an arrival from runway exit RX1 to a gate.</CardDescription>
+        <CardDescription>Send an arrival from high-speed exit RH1 to a gate.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div className="flex gap-2">

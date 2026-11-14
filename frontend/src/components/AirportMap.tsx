@@ -31,7 +31,7 @@ function intersect(p: XY, d: XY, q: XY, e: XY): XY {
   return add(p, mul(d, t));
 }
 
-const SIGN_SKIP = /^(Spur|Apron|Runway|Crossing)/;
+const SIGN_SKIP = /^(Spur|Apron|Runway|Crossing|Taxilane)/;
 
 const Halo = ({ x, y, children }: { x: number; y: number; children: string }) => (
   <text x={x} y={y} className="map-label">{children}</text>
@@ -43,8 +43,10 @@ const BaseLayer = memo(function BaseLayer({ graph, projection }: { graph: Graph;
   const nodes = graph.nodes;
   const nodePos = new Map(nodes.map((n) => [n._id, toXY(n.location.coordinates)]));
 
-  const runway = graph.edges.find((e) => e.kind === "runway");
-  const rw = runway ? edgePts(runway) : null;
+  // The runway may be several edges (split at the high-speed exits); draw it as one strip end to end.
+  const runways = graph.edges.filter((e) => e.kind === "runway");
+  const runway = runways[0];
+  const rw = runways.length ? [edgePts(runways[0])[0], edgePts(runways[runways.length - 1]).at(-1)!] : null;
   const rwDir = rw ? unit(sub(rw[rw.length - 1], rw[0])) : ([1, 0] as XY);
   const rwStart = rw ? sub(rw[0], mul(rwDir, RUNWAY_OVERRUN)) : null;
   const rwEnd = rw ? add(rw[rw.length - 1], mul(rwDir, RUNWAY_OVERRUN)) : null;
@@ -63,7 +65,7 @@ const BaseLayer = memo(function BaseLayer({ graph, projection }: { graph: Graph;
     return { x: Math.min(...xs) - 30, w: Math.max(...xs) - Math.min(...xs) + 60, y: below ? gy + 30 : gy - 30 - 40, h: 40 };
   });
 
-  const aprons = graph.edges.filter((e) => e.kind === "apron" || (e.kind === "taxiway" && (e.name.startsWith("Spur"))));
+  const aprons = graph.edges.filter((e) => e.kind === "apron" || (e.kind === "taxiway" && /^(Spur|Taxilane)/.test(e.name)));
   const roads = graph.edges.filter((e) => e.kind === "taxiway" || e.kind === "runway_crossing");
 
   const seenSigns = new Set<string>();
@@ -107,7 +109,7 @@ const BaseLayer = memo(function BaseLayer({ graph, projection }: { graph: Graph;
         {roads.map((e) => <polyline key={`c${e._id}`} points={pts(edgePts(e))} stroke="var(--map-centerline)" strokeWidth="2" strokeLinecap="butt" />)}
       </g>
       {runway && rwStart && rwEnd && (
-        <g data-edge={runway._id} data-kind="runway">
+        <g data-edge={runways.map((e) => e._id).join(" ")} data-kind="runway">
           <polyline points={pts([rwStart, rwEnd])} stroke="var(--map-runway)" strokeWidth={RUNWAY_W} fill="none" />
           {[-1, 1].map((s) => (
             <polyline key={s} points={pts([add(rwStart, mul(rwNormal, s * (RUNWAY_W / 2 - 2))), add(rwEnd, mul(rwNormal, s * (RUNWAY_W / 2 - 2)))])} stroke="#f4f6f8" strokeWidth="1.5" fill="none" />

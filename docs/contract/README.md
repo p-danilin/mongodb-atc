@@ -1,6 +1,6 @@
 # Contract (draft)
 
-Files: [`types.ts`](./types.ts) (all shapes), [`api.md`](./api.md) (endpoints, websocket, client rules), [`seed.json`](./seed.json) (invented airport near Toronto, 14 nodes, 17 edges, one aircraft, one sample zone).
+Files: [`types.ts`](./types.ts) (all shapes), [`api.md`](./api.md) (endpoints, websocket, client rules), [`seed.json`](./seed.json) (invented airport near Toronto, 24 nodes, 29 edges, one aircraft, one sample zone).
 
 Agreed between Brain (backend) and Tower (frontend). Changing anything here means telling the other person first. Terms are defined in `/CONTEXT.md`.
 
@@ -30,7 +30,7 @@ Agreed between Brain (backend) and Tower (frontend). Changing anything here mean
 
 - **Dates** are ISO strings on the wire; ids are strings (`V-1`, `Z-014`, `A-0231`, `R-1`).
 - **Added events** beyond the plan: `vehicle.spawned`, `zone.removed` (early delete; `zone.expired` stays TTL-only), `approval.resolved`, `sim.reset`. `vehicle.moved` fires on any vehicle update (position, heading, route, status).
-- **Edge kinds** `taxiway | apron | runway | runway_crossing`. The seed has one crossing (`E10`) so a gate on the north side (G5, G6) forces a needs-approval route. A closure on `E2` forces a reroute to Gate 2 via the apron links.
+- **Edge kinds** `taxiway | apron | runway | runway_crossing`. The seed has one crossing (`E25`) so a gate on the north side (G5, G6) forces a needs-approval route. The runway is three `runway` edges split at two high-speed exits (`RH1`, `RH2`, edges `E12`, `E13`) that both angle the way an arrival rolls (west to east) and join a parallel taxiway A; gates connect only to the gate-front junctions A1–A4 by spurs, never to each other. A closure on `E6` (taxiway A, T2–T3) forces a reroute to Gate 1 via the taxilane.
 - **Identity kinds** are `agent | vehicle | human` (the plan said `aircraft`; renamed with Vehicle). `supervisor-1` is the human; there is no auth.
 - **Ledger** entries use `n` for per-run order, so it is not confused with the websocket `seq`. Action payloads use `vehicle_id` instead of the plan's `aircraft`.
 - **Errors** are `{ error: { code, message } }` with 400, 404 or 409.

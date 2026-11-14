@@ -14,7 +14,7 @@
         "location": {
           "type": "Point",
           "coordinates": [
-            -79.634,
+            -79.636,
             43.678
           ]
         }
@@ -26,8 +26,116 @@
         "location": {
           "type": "Point",
           "coordinates": [
-            -79.622,
+            -79.62,
             43.678
+          ]
+        }
+      },
+      {
+        "_id": "RH1",
+        "type": "runway_exit",
+        "name": "High-speed exit 1",
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -79.6335,
+            43.678
+          ]
+        }
+      },
+      {
+        "_id": "RH2",
+        "type": "runway_exit",
+        "name": "High-speed exit 2",
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -79.6255,
+            43.678
+          ]
+        }
+      },
+      {
+        "_id": "P1",
+        "type": "junction",
+        "name": "T1",
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -79.636,
+            43.6762
+          ]
+        }
+      },
+      {
+        "_id": "P2",
+        "type": "junction",
+        "name": "T2",
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -79.634,
+            43.6762
+          ]
+        }
+      },
+      {
+        "_id": "P3",
+        "type": "junction",
+        "name": "T3",
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -79.63,
+            43.6762
+          ]
+        }
+      },
+      {
+        "_id": "P4",
+        "type": "junction",
+        "name": "T4",
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -79.628,
+            43.6762
+          ]
+        }
+      },
+      {
+        "_id": "P5",
+        "type": "junction",
+        "name": "T5",
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -79.626,
+            43.6762
+          ]
+        }
+      },
+      {
+        "_id": "P6",
+        "type": "junction",
+        "name": "T6",
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -79.622,
+            43.6762
+          ]
+        }
+      },
+      {
+        "_id": "P7",
+        "type": "junction",
+        "name": "T7",
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -79.62,
+            43.6762
           ]
         }
       },
@@ -39,7 +147,7 @@
           "type": "Point",
           "coordinates": [
             -79.634,
-            43.674
+            43.6715
           ]
         }
       },
@@ -51,7 +159,7 @@
           "type": "Point",
           "coordinates": [
             -79.63,
-            43.674
+            43.6715
           ]
         }
       },
@@ -63,7 +171,7 @@
           "type": "Point",
           "coordinates": [
             -79.626,
-            43.674
+            43.6715
           ]
         }
       },
@@ -75,7 +183,7 @@
           "type": "Point",
           "coordinates": [
             -79.622,
-            43.674
+            43.6715
           ]
         }
       },
@@ -124,6 +232,18 @@
           "coordinates": [
             -79.622,
             43.67
+          ]
+        }
+      },
+      {
+        "_id": "NX",
+        "type": "junction",
+        "name": "C0",
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -79.628,
+            43.682
           ]
         }
       },
@@ -180,90 +300,216 @@
       {
         "_id": "E1",
         "from": "RX1",
-        "to": "J1",
+        "to": "RH1",
+        "kind": "runway",
+        "name": "Runway",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.636,
+              43.678
+            ],
+            [
+              -79.6335,
+              43.678
+            ]
+          ]
+        },
+        "length_m": 201
+      },
+      {
+        "_id": "E2",
+        "from": "RH1",
+        "to": "RH2",
+        "kind": "runway",
+        "name": "Runway",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.6335,
+              43.678
+            ],
+            [
+              -79.6255,
+              43.678
+            ]
+          ]
+        },
+        "length_m": 643
+      },
+      {
+        "_id": "E3",
+        "from": "RH2",
+        "to": "RX2",
+        "kind": "runway",
+        "name": "Runway",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.6255,
+              43.678
+            ],
+            [
+              -79.62,
+              43.678
+            ]
+          ]
+        },
+        "length_m": 442
+      },
+      {
+        "_id": "E4",
+        "from": "RX1",
+        "to": "P1",
         "kind": "taxiway",
         "name": "B1",
         "geometry": {
           "type": "LineString",
           "coordinates": [
             [
-              -79.634,
+              -79.636,
               43.678
             ],
             [
-              -79.634,
-              43.674
+              -79.636,
+              43.6762
             ]
           ]
         },
-        "length_m": 445
-      },
-      {
-        "_id": "E2",
-        "from": "J1",
-        "to": "J2",
-        "kind": "taxiway",
-        "name": "A",
-        "geometry": {
-          "type": "LineString",
-          "coordinates": [
-            [
-              -79.634,
-              43.674
-            ],
-            [
-              -79.63,
-              43.674
-            ]
-          ]
-        },
-        "length_m": 322
-      },
-      {
-        "_id": "E3",
-        "from": "J2",
-        "to": "J3",
-        "kind": "taxiway",
-        "name": "A",
-        "geometry": {
-          "type": "LineString",
-          "coordinates": [
-            [
-              -79.63,
-              43.674
-            ],
-            [
-              -79.626,
-              43.674
-            ]
-          ]
-        },
-        "length_m": 322
-      },
-      {
-        "_id": "E4",
-        "from": "J3",
-        "to": "J4",
-        "kind": "taxiway",
-        "name": "A",
-        "geometry": {
-          "type": "LineString",
-          "coordinates": [
-            [
-              -79.626,
-              43.674
-            ],
-            [
-              -79.622,
-              43.674
-            ]
-          ]
-        },
-        "length_m": 322
+        "length_m": 200
       },
       {
         "_id": "E5",
-        "from": "J4",
+        "from": "P1",
+        "to": "P2",
+        "kind": "taxiway",
+        "name": "A",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.636,
+              43.6762
+            ],
+            [
+              -79.634,
+              43.6762
+            ]
+          ]
+        },
+        "length_m": 161
+      },
+      {
+        "_id": "E6",
+        "from": "P2",
+        "to": "P3",
+        "kind": "taxiway",
+        "name": "A",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.634,
+              43.6762
+            ],
+            [
+              -79.63,
+              43.6762
+            ]
+          ]
+        },
+        "length_m": 322
+      },
+      {
+        "_id": "E7",
+        "from": "P3",
+        "to": "P4",
+        "kind": "taxiway",
+        "name": "A",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.63,
+              43.6762
+            ],
+            [
+              -79.628,
+              43.6762
+            ]
+          ]
+        },
+        "length_m": 161
+      },
+      {
+        "_id": "E8",
+        "from": "P4",
+        "to": "P5",
+        "kind": "taxiway",
+        "name": "A",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.628,
+              43.6762
+            ],
+            [
+              -79.626,
+              43.6762
+            ]
+          ]
+        },
+        "length_m": 161
+      },
+      {
+        "_id": "E9",
+        "from": "P5",
+        "to": "P6",
+        "kind": "taxiway",
+        "name": "A",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.626,
+              43.6762
+            ],
+            [
+              -79.622,
+              43.6762
+            ]
+          ]
+        },
+        "length_m": 322
+      },
+      {
+        "_id": "E10",
+        "from": "P6",
+        "to": "P7",
+        "kind": "taxiway",
+        "name": "A",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.622,
+              43.6762
+            ],
+            [
+              -79.62,
+              43.6762
+            ]
+          ]
+        },
+        "length_m": 161
+      },
+      {
+        "_id": "E11",
+        "from": "P7",
         "to": "RX2",
         "kind": "taxiway",
         "name": "B2",
@@ -271,19 +517,208 @@
           "type": "LineString",
           "coordinates": [
             [
-              -79.622,
-              43.674
+              -79.62,
+              43.6762
             ],
             [
-              -79.622,
+              -79.62,
               43.678
             ]
           ]
         },
-        "length_m": 445
+        "length_m": 200
       },
       {
-        "_id": "E6",
+        "_id": "E12",
+        "from": "RH1",
+        "to": "P3",
+        "kind": "taxiway",
+        "name": "H1",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.6335,
+              43.678
+            ],
+            [
+              -79.63,
+              43.6762
+            ]
+          ]
+        },
+        "length_m": 345
+      },
+      {
+        "_id": "E13",
+        "from": "RH2",
+        "to": "P6",
+        "kind": "taxiway",
+        "name": "H2",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.6255,
+              43.678
+            ],
+            [
+              -79.622,
+              43.6762
+            ]
+          ]
+        },
+        "length_m": 345
+      },
+      {
+        "_id": "E14",
+        "from": "P2",
+        "to": "J1",
+        "kind": "taxiway",
+        "name": "D1",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.634,
+              43.6762
+            ],
+            [
+              -79.634,
+              43.6715
+            ]
+          ]
+        },
+        "length_m": 523
+      },
+      {
+        "_id": "E15",
+        "from": "P3",
+        "to": "J2",
+        "kind": "taxiway",
+        "name": "D2",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.63,
+              43.6762
+            ],
+            [
+              -79.63,
+              43.6715
+            ]
+          ]
+        },
+        "length_m": 523
+      },
+      {
+        "_id": "E16",
+        "from": "P5",
+        "to": "J3",
+        "kind": "taxiway",
+        "name": "D3",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.626,
+              43.6762
+            ],
+            [
+              -79.626,
+              43.6715
+            ]
+          ]
+        },
+        "length_m": 523
+      },
+      {
+        "_id": "E17",
+        "from": "P6",
+        "to": "J4",
+        "kind": "taxiway",
+        "name": "D4",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.622,
+              43.6762
+            ],
+            [
+              -79.622,
+              43.6715
+            ]
+          ]
+        },
+        "length_m": 523
+      },
+      {
+        "_id": "E18",
+        "from": "J1",
+        "to": "J2",
+        "kind": "taxiway",
+        "name": "Taxilane",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.634,
+              43.6715
+            ],
+            [
+              -79.63,
+              43.6715
+            ]
+          ]
+        },
+        "length_m": 322
+      },
+      {
+        "_id": "E19",
+        "from": "J2",
+        "to": "J3",
+        "kind": "taxiway",
+        "name": "Taxilane",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.63,
+              43.6715
+            ],
+            [
+              -79.626,
+              43.6715
+            ]
+          ]
+        },
+        "length_m": 322
+      },
+      {
+        "_id": "E20",
+        "from": "J3",
+        "to": "J4",
+        "kind": "taxiway",
+        "name": "Taxilane",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.626,
+              43.6715
+            ],
+            [
+              -79.622,
+              43.6715
+            ]
+          ]
+        },
+        "length_m": 322
+      },
+      {
+        "_id": "E21",
         "from": "J1",
         "to": "G1",
         "kind": "taxiway",
@@ -293,7 +728,7 @@
           "coordinates": [
             [
               -79.634,
-              43.674
+              43.6715
             ],
             [
               -79.634,
@@ -301,10 +736,10 @@
             ]
           ]
         },
-        "length_m": 445
+        "length_m": 167
       },
       {
-        "_id": "E7",
+        "_id": "E22",
         "from": "J2",
         "to": "G2",
         "kind": "taxiway",
@@ -314,7 +749,7 @@
           "coordinates": [
             [
               -79.63,
-              43.674
+              43.6715
             ],
             [
               -79.63,
@@ -322,10 +757,10 @@
             ]
           ]
         },
-        "length_m": 445
+        "length_m": 167
       },
       {
-        "_id": "E8",
+        "_id": "E23",
         "from": "J3",
         "to": "G3",
         "kind": "taxiway",
@@ -335,7 +770,7 @@
           "coordinates": [
             [
               -79.626,
-              43.674
+              43.6715
             ],
             [
               -79.626,
@@ -343,10 +778,10 @@
             ]
           ]
         },
-        "length_m": 445
+        "length_m": 167
       },
       {
-        "_id": "E9",
+        "_id": "E24",
         "from": "J4",
         "to": "G4",
         "kind": "taxiway",
@@ -356,7 +791,7 @@
           "coordinates": [
             [
               -79.622,
-              43.674
+              43.6715
             ],
             [
               -79.622,
@@ -364,33 +799,33 @@
             ]
           ]
         },
-        "length_m": 445
+        "length_m": 167
       },
       {
-        "_id": "E10",
-        "from": "J2",
-        "to": "N1",
+        "_id": "E25",
+        "from": "P4",
+        "to": "NX",
         "kind": "runway_crossing",
         "name": "Crossing",
         "geometry": {
           "type": "LineString",
           "coordinates": [
             [
-              -79.63,
-              43.674
+              -79.628,
+              43.6762
             ],
             [
-              -79.63,
+              -79.628,
               43.682
             ]
           ]
         },
-        "length_m": 890
+        "length_m": 645
       },
       {
-        "_id": "E11",
+        "_id": "E26",
         "from": "N1",
-        "to": "N2",
+        "to": "NX",
         "kind": "taxiway",
         "name": "C",
         "geometry": {
@@ -401,15 +836,36 @@
               43.682
             ],
             [
+              -79.628,
+              43.682
+            ]
+          ]
+        },
+        "length_m": 161
+      },
+      {
+        "_id": "E27",
+        "from": "NX",
+        "to": "N2",
+        "kind": "taxiway",
+        "name": "C",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -79.628,
+              43.682
+            ],
+            [
               -79.626,
               43.682
             ]
           ]
         },
-        "length_m": 322
+        "length_m": 161
       },
       {
-        "_id": "E12",
+        "_id": "E28",
         "from": "N1",
         "to": "G5",
         "kind": "taxiway",
@@ -430,7 +886,7 @@
         "length_m": 445
       },
       {
-        "_id": "E13",
+        "_id": "E29",
         "from": "N2",
         "to": "G6",
         "kind": "taxiway",
@@ -449,90 +905,6 @@
           ]
         },
         "length_m": 445
-      },
-      {
-        "_id": "E14",
-        "from": "RX1",
-        "to": "RX2",
-        "kind": "runway",
-        "name": "Runway",
-        "geometry": {
-          "type": "LineString",
-          "coordinates": [
-            [
-              -79.634,
-              43.678
-            ],
-            [
-              -79.622,
-              43.678
-            ]
-          ]
-        },
-        "length_m": 966
-      },
-      {
-        "_id": "E15",
-        "from": "G1",
-        "to": "G2",
-        "kind": "apron",
-        "name": "Apron 1-2",
-        "geometry": {
-          "type": "LineString",
-          "coordinates": [
-            [
-              -79.634,
-              43.67
-            ],
-            [
-              -79.63,
-              43.67
-            ]
-          ]
-        },
-        "length_m": 322
-      },
-      {
-        "_id": "E16",
-        "from": "G2",
-        "to": "G3",
-        "kind": "apron",
-        "name": "Apron 2-3",
-        "geometry": {
-          "type": "LineString",
-          "coordinates": [
-            [
-              -79.63,
-              43.67
-            ],
-            [
-              -79.626,
-              43.67
-            ]
-          ]
-        },
-        "length_m": 322
-      },
-      {
-        "_id": "E17",
-        "from": "G3",
-        "to": "G4",
-        "kind": "apron",
-        "name": "Apron 3-4",
-        "geometry": {
-          "type": "LineString",
-          "coordinates": [
-            [
-              -79.626,
-              43.67
-            ],
-            [
-              -79.622,
-              43.67
-            ]
-          ]
-        },
-        "length_m": 322
       }
     ]
   },
@@ -583,11 +955,11 @@
       "position": {
         "type": "Point",
         "coordinates": [
-          -79.634,
+          -79.6335,
           43.678
         ]
       },
-      "heading": 180,
+      "heading": 125,
       "route": [],
       "status": "idle",
       "ts": "2026-11-14T15:00:00Z",
@@ -608,23 +980,23 @@
         [
           [
             -79.6325,
-            43.6735
+            43.6757
           ],
           [
             -79.6315,
-            43.6735
+            43.6757
           ],
           [
             -79.6315,
-            43.6745
+            43.6767
           ],
           [
             -79.6325,
-            43.6745
+            43.6767
           ],
           [
             -79.6325,
-            43.6735
+            43.6757
           ]
         ]
       ]

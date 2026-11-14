@@ -31,7 +31,7 @@ const CONTROLLER = "controller-1";
 /** Edge kinds outside the controller's clearances. A route using one needs supervisor approval. */
 const RESTRICTED = ["runway", "runway_crossing"] as const;
 const MAX_TTL_S = 3600;
-const ARRIVALS: NodeId = "RX1";
+const ARRIVALS: NodeId = "RH1";
 
 interface ActiveZone { doc: Doc; edges: Set<EdgeId>; timer: NodeJS.Timeout }
 interface Flight { name: string; gate: NodeId }
@@ -148,7 +148,7 @@ export class World {
     );
     const doc: Doc = {
       _id: id, kind: "aircraft", identity_id: identity, run_id: this.run._id,
-      position: from.location, heading: 180, route: [], status: "idle", ts: new Date(), details: { flight: name, gate },
+      position: from.location, heading: 125, route: [], status: "idle", ts: new Date(), details: { flight: name, gate },
     };
     await this.database.col.vehicles.insertOne(doc);
     this.flights.set(id, { name, gate });
