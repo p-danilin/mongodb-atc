@@ -20,11 +20,11 @@ Agreed between Brain (backend) and Tower (frontend). Changing anything here mean
 - **Heading.** Vehicle base fields include `heading` (degrees, 0 = north, clockwise), set by the sim from the current edge direction and written with each position update. A stationary vehicle keeps its last heading.
 - **Vehicle status has four values:** `idle`, `moving`, `awaiting_approval`, `halted`. `halted` is stored on each Vehicle as well as on the run. Denials are carried by `action.decided` (decision `deny`) and reroutes by a new `route` on the Vehicle plus a ledger entry; neither is a status.
 - **Approvals are append-only.** An action stays `needs_approval` forever. Approving or denying writes a new resolution record with `resolves: "<action id>"`, the approver's identity, the decision and `ts`, and emits a new `approval.resolved` event. `POST /api/approvals/:id` takes `{ decision: "approve" | "deny", note? }`. The server decides which approvals are still pending; `GET /api/approvals?status=pending` is the source for the queue.
+- **Snapshot carries `seq`.** `GET /api/state` returns `{ seq, vehicles, zones, pending_approvals, run }`, where `seq` is the websocket counter at snapshot time. The UI buffers websocket messages while the snapshot loads, applies the snapshot, drops buffered messages with `seq <= snapshot.seq`, then applies the rest in order.
 
 ## Deferred (not in the frozen contract)
 
 - **Under-the-hood panel data.** Possible optional `source: { collection, op }` on the envelope and a `write.rejected` event. To be designed once the Atlas implementation is clearer; the panel itself may change. The envelope can gain optional fields without breaking the map or feed.
-- **Snapshot carries `seq`.** `GET /api/state` returns `{ seq, vehicles, zones, pending_approvals, run }`, where `seq` is the websocket counter at snapshot time. The UI buffers websocket messages while the snapshot loads, applies the snapshot, drops buffered messages with `seq <= snapshot.seq`, then applies the rest in order.
 
 ## Defaults chosen without discussion (Brain to review)
 
