@@ -30,7 +30,7 @@ type MessageListener = (m: WsMessage) => void;
 export function createStore() {
   let state: StoreState = {
     ...initialState, connection: "disconnected", ledger: [], highlightedApproval: null,
-    dropMode: false, ttlSeconds: 60, selectedZone: null, tab: "events", redTeamAlert: null, highlightedAction: null,
+    dropMode: false, ttlSeconds: 60, selectedZone: null, tab: "approvals", redTeamAlert: null, highlightedAction: null,
   };
   const listeners = new Set<Listener>();
   const messageListeners = new Set<MessageListener>();

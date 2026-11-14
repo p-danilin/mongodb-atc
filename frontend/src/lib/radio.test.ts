@@ -44,6 +44,15 @@ describe("runRadioFlow", () => {
     expect(heard.join("\n")).toContain("cross runway two seven");
     expect(heard[heard.length - 1]).toMatch(/^Pilot: Cross runway two seven/);
   });
+  it("hold short: clears to the line, then tells the pilot to cross once approved", async () => {
+    const { d, heard } = deps(taxi({ route: ["H1", "A"], hold_short: "T4" }));
+    await runRadioFlow("AC101", "G5", "Gate 5", d);
+    const lines = heard.filter((h) => !h.startsWith("note"));
+    expect(lines[1]).toContain("hold short of runway two seven");
+    expect(lines[2]).toContain("hold short of runway two seven");
+    expect(lines[3]).toMatch(/^Ground: .*cross runway two seven/);
+    expect(lines[4]).toMatch(/^Pilot: Cross runway two seven/);
+  });
   it("a denied crossing holds", async () => {
     const { d, heard } = deps(taxi({ decision: "needs_approval", route: [] }), "deny");
     await runRadioFlow("AC101", "G2", "Gate 2", d);

@@ -24,6 +24,6 @@ export const config = {
    * (`POST /api/pilot/taxi` or the `request_taxi` MCP tool). Set `AUTO_DISPATCH=0` for the voice demo.
    */
   autoDispatch: process.env.AUTO_DISPATCH !== "0",
-  /** Metres travelled per tick. */
-  stepM: Number(process.env.STEP_M ?? 25),
+  /** Metres travelled per tick (37.5 is 50% faster than the original 25, for the one-minute demo). */
+  stepM: Number(process.env.STEP_M ?? 37.5),
 };

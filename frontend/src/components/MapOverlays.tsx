@@ -30,7 +30,7 @@ export function ClosureControls({ message, clearMessage }: { message: string | n
   const error = message ?? removeError;
 
   return (
-    <div className={`absolute left-3 ${halted ? "top-14" : "top-3"} flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-2`}>
+    <div className={`absolute left-3 ${halted ? "top-24" : "top-14"} flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-2`}>
       <div className="flex items-center gap-2 rounded-lg border bg-card/95 p-1.5 shadow-sm">
         <Button size="sm" variant={dropMode ? "default" : "outline"} aria-pressed={dropMode}
           onClick={() => { clearMessage(); setRemoveError(null); store.setDropMode(!dropMode); }}>

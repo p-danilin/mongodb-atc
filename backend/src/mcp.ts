@@ -35,7 +35,7 @@ function build(world: World): McpServer {
     description:
       "Request a taxi route to a gate for a flight that has called in. The policy gate decides before anything moves and the decision is recorded. " +
       "Returns `decision`: `allow` (the flight is now taxiing along `route`), `needs_approval` (the flight holds position until the supervisor approves, usually a runway crossing), " +
-      "`deny` (nothing is permitted, the flight holds; `reason` says why) or `arrived`. `reassigned_from` is set when the requested gate was taken and another was assigned.",
+      "`deny` (nothing is permitted, the flight holds; `reason` says why) or `arrived`. `hold_short` is set when the flight is cleared only as far as the hold short line before the runway: tell it to taxi `route` and hold short of the runway, and use get_flight_status later to give the crossing clearance once the supervisor approves. `reassigned_from` is set when the requested gate was taken and another was assigned.",
     inputSchema: {
       flight: z.string().describe("Callsign, e.g. AC101"),
       gate: z.string().optional().describe("Requested gate, e.g. G2 or 'gate 2'. Omit to use the gate the flight is already bound for."),

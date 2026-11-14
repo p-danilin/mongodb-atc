@@ -20,6 +20,8 @@ export class Sim {
   halted = false;
   /** Position writes only apply to vehicles of this run, so a stale writer can never move a later run's vehicle. */
   runId = "";
+  /** Called once a vehicle has finished its plan and its last position is written. */
+  onDone: ((vehicleId: string) => void) | null = null;
 
   constructor(private database: Database) {}
 
@@ -68,17 +70,19 @@ export class Sim {
 
   private async tick() {
     const writes: Promise<unknown>[] = [];
+    const finished: string[] = [];
     if (this.halted) return;
     for (const [id, t] of this.tracks) {
       if (t.paused) continue;
       const w = t.wps[t.i++];
       t.position = w.position;
       const done = t.i >= t.wps.length;
-      if (done) this.tracks.delete(id);
+      if (done) { this.tracks.delete(id); finished.push(id); }
       const set: Partial<Doc> = { position: { type: "Point", coordinates: w.position }, heading: w.heading, ts: new Date() };
       if (done) { set.status = "idle"; set.route = []; }
       writes.push(this.database.col.vehicles.updateOne({ _id: id, run_id: this.runId }, { $set: set }));
     }
     await Promise.all(writes);
+    for (const id of finished) this.onDone?.(id);
   }
 }

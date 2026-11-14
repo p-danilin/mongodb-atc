@@ -8,6 +8,8 @@ export interface RouteRequest {
   vehicle_id: VehicleId;
   gate: NodeId;
   edges: EdgeId[];
+  /** Where the route ends when that is short of the gate (cleared as far as a hold short line). Defaults to the gate. */
+  to?: NodeId;
   /** When the vehicle is part-way along the first edge: the stretch of it still to travel. */
   ahead?: Position[];
   /** A supervisor has approved this request, so rules whose effect is `needs_approval` are satisfied. */
@@ -75,7 +77,7 @@ export class Gate {
     connected: ({ req, edges }) => {
       const gate = this.graph.nodes.find((n) => n._id === req.gate);
       if (edges.length !== req.edges.length) return "route names an edge that does not exist";
-      return edges.length && orientRoute(this.graph, req.edges, req.gate) ? null : `route is not a connected path to ${gate?.name ?? req.gate}`;
+      return edges.length && orientRoute(this.graph, req.edges, req.to ?? req.gate) ? null : `route is not a connected path to ${gate?.name ?? req.gate}`;
     },
 
     // The geospatial check: does any edge of the route touch a closure in force?

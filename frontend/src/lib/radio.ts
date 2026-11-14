@@ -9,6 +9,8 @@ export interface Taxi {
   gate_name: string;
   route: string[];
   reason?: string;
+  /** Set when cleared only as far as the hold short line; the runway crossing waits for the supervisor. */
+  hold_short?: string;
   reassigned_from?: string;
 }
 
@@ -64,7 +66,9 @@ export function groundReply(t: Taxi): string {
   const cs = spokenCallsign(t.flight);
   const gate = spokenGate(t.gate_name);
   switch (t.decision) {
-    case "allow": return `${cs}, ${t.reassigned_from ? `${spokenGate(t.reassigned_from)} is occupied, ` : ""}taxi to ${gate} via ${spokenRoute(t.route)}.`;
+    case "allow":
+      if (t.hold_short) return `${cs}, taxi via ${spokenRoute(t.route)}, hold short of runway two seven.`;
+      return `${cs}, ${t.reassigned_from ? `${spokenGate(t.reassigned_from)} is occupied, ` : ""}taxi to ${gate} via ${spokenRoute(t.route)}.`;
     case "needs_approval": return `${cs}, hold position, runway crossing requires clearance, standby.`;
     case "deny": return `${cs}, unable, ${t.reason ?? "not permitted"}, hold position.`;
     case "arrived": return `${cs}, you are at ${gate}, monitor Ground.`;
@@ -74,6 +78,7 @@ export function groundReply(t: Taxi): string {
 /** The pilot's readback of that transmission. */
 export function pilotReadback(t: Taxi, crossing = false): string {
   const cs = spokenCallsign(t.flight);
+  if (t.decision === "allow" && t.hold_short) return `Taxi via ${spokenRoute(t.route)}, hold short of runway two seven, ${cs}.`;
   if (t.decision === "allow") return `${crossing ? "Cross runway two seven, " : ""}taxi to ${spokenGate(t.gate_name)} via ${spokenRoute(t.route)}, ${cs}.`;
   if (t.decision === "arrived") return `Monitoring Ground, ${cs}.`;
   return `Hold position, ${cs}.`;
@@ -113,19 +118,22 @@ export async function runRadioFlow(flight: string, gateId: string, gateName: str
   await d.say("Pilot", pilotRequest(flight, gateName));
   d.note(`MCP request_taxi(${flight}, ${gateId})`);
   const taxi = parse<Taxi>(await d.tool("request_taxi", { flight, gate: gateId }));
-  d.note(`Policy gate: ${taxi.decision}${taxi.reason && taxi.decision !== "allow" ? ` (${taxi.reason})` : ""}`);
+  d.note(`Policy gate: ${taxi.decision}${taxi.reason && (taxi.decision !== "allow" || taxi.hold_short) ? ` (${taxi.reason})` : ""}`);
+  const waits = taxi.decision === "needs_approval" || !!taxi.hold_short;
+  // Listen before speaking: the supervisor may answer while the radio is still talking.
+  const supervisor = waits ? d.waitForSupervisor(flight) : null;
   d.prefetch("Pilot", pilotReadback(taxi)); // generate the readback while Ground is still talking
   await d.say("Ground", groundReply(taxi));
   await d.say("Pilot", pilotReadback(taxi));
-  if (taxi.decision !== "needs_approval") return;
+  if (!supervisor) return;
 
-  const answer = await d.waitForSupervisor(flight);
+  const answer = await supervisor;
   d.note(`Supervisor: ${answer}`);
   if (answer === "deny") { await d.say("Ground", approvalReply(flight, taxi, false)); await d.say("Pilot", `Unable, holding position, ${spokenCallsign(flight)}.`); return; }
   d.note(`MCP get_flight_status(${flight})`);
   const status = parse<{ gate_name: string; route: string[] }>(await d.tool("get_flight_status", { flight }));
   await d.say("Ground", approvalReply(flight, status, true));
-  await d.say("Pilot", pilotReadback({ ...taxi, decision: "allow", gate_name: status.gate_name, route: status.route }, true));
+  await d.say("Pilot", pilotReadback({ ...taxi, hold_short: undefined, decision: "allow", gate_name: status.gate_name, route: status.route }, true));
 }
 
 // ------------------------------------------------------------------ browser side
@@ -210,7 +218,7 @@ async function play(blob: Blob, who: "Pilot" | "Ground"): Promise<void> {
 
 /** Radio transmissions play one at a time, in order. Audio is fetched ahead so each line follows the last without a gap. */
 /** `pilotVoice` is this flight's pilot: an index into the backend's pilot voices. */
-export function makeSpeaker(pilotVoice: number, onLine: (who: "Pilot" | "Ground", text: string) => void, onOffline: () => void) {
+export function makeSpeaker(pilotVoice: number, onLine: (who: "Pilot" | "Ground", text: string) => void, onOffline: () => void, onEnd: (who: "Pilot" | "Ground", text: string) => void = () => {}) {
   const pending = new Map<string, Promise<Blob | null>>();
   const key = (who: string, text: string) => `${who}|${text}`;
   return {
@@ -223,6 +231,7 @@ export function makeSpeaker(pilotVoice: number, onLine: (who: "Pilot" | "Ground"
       onLine(who, text);
       if (audio) await play(audio, who);
       else { onOffline(); await new Promise((r) => setTimeout(r, Math.min(6000, 600 + text.length * 55))); } // captions only, paced like speech
+      onEnd(who, text);
     },
   };
 }

@@ -49,6 +49,8 @@ export interface TaxiOutcome {
   action_id?: string;
   policy_ids?: string[];
   reason?: string;
+  /** Set when the flight is only cleared as far as a hold short line (name of the holding point); the runway crossing awaits the supervisor. */
+  hold_short?: string;
   /** Set when the requested gate was taken and the controller chose another. */
   reassigned_from?: string;
 }
@@ -75,12 +77,24 @@ export class World {
   private held = new Set<string>();
   /** Vehicles whose runway crossing a supervisor refused: do not ask again. */
   private refused = new Set<string>();
+  /** What to do when a vehicle finishes the plan it is on: roll-off after landing, or holding short of the runway crossing. */
+  private then = new Map<string, () => Promise<void>>();
+  /** Flights still rolling off the runway onto the first taxiway. */
+  private rollOff = new Set<string>();
   /** State changes and the decisions they cause run one at a time. */
   private lock: Promise<unknown> = Promise.resolve();
   readonly gate: Gate;
 
   constructor(private database: Database, private hub: Hub, private sim: Sim, private ledger: Ledger, readonly graph: Graph) {
     this.gate = new Gate(database, graph, { run: () => this.run, activeZones: () => [...this.zones.keys()] });
+    sim.onDone = (id) => {
+      void this.exclusive(async () => {
+        const next = this.then.get(id);
+        if (!next) return;
+        this.then.delete(id);
+        await next();
+      }).catch((e) => console.error("after-taxi step failed:", e.message));
+    };
   }
 
   // ------------------------------------------------------------------ startup
@@ -169,11 +183,26 @@ export class World {
     await this.database.col.vehicles.insertOne(doc);
     this.flights.set(id, { name, gate });
     this.record(SUPERVISOR, "vehicle.spawned", "vehicles", id, `${name} arrived at ${from.name}, bound for ${to.name}`);
-    const origin = { node: from._id, position: from.location.coordinates };
-    // Either the flight waits for its pilot to call in, or the arrival itself wakes the controller.
-    // Dispatch runs after the response, so a slow decision never blocks the API.
-    if (hold) this.parked.set(id, origin);
-    else void this.exclusive(() => this.dispatch(id, origin));
+    // The aircraft vacates the runway at once: it rolls onto the first taxiway and holds there, off the runway.
+    const exit = this.graph.edges.find((e) => (e.from === from._id || e.to === from._id) && !(RESTRICTED as readonly string[]).includes(e.kind));
+    if (exit) {
+      const step: Step = { edge: exit, forward: exit.from === from._id };
+      const holdNode = this.node(step.forward ? exit.to : exit.from);
+      const plan = buildPlan([step], config.stepM);
+      const origin: Origin = { node: holdNode._id, position: holdNode.location.coordinates };
+      this.rollOff.add(id);
+      await this.go(id, plan, from.location.coordinates, async () => {
+        this.rollOff.delete(id);
+        // Either the flight waits for its pilot to call in, or the arrival itself wakes the controller.
+        if (hold) this.parked.set(id, origin);
+        else await this.dispatch(id, origin);
+      });
+      this.parked.set(id, { node: from._id, position: from.location.coordinates }); // until the roll-off ends
+    } else {
+      const origin = { node: from._id, position: from.location.coordinates };
+      if (hold) this.parked.set(id, origin);
+      else void this.exclusive(() => this.dispatch(id, origin));
+    }
     return wire<Vehicle>(doc);
   }
 
@@ -197,7 +226,10 @@ export class World {
       const pending = (await this.pendingApprovals()).find((a) => a.payload.vehicle_id === id);
       if (pending && same) return base("needs_approval", { action_id: pending._id, policy_ids: pending.policy_ids, reason: `${pending.reason} (still waiting for the supervisor)`, route: this.names(pending.payload.edges.map((e) => ({ edge: this.edge(e), forward: true }))) });
       const at = this.sim.where(id);
-      if (at && same) return base("allow", { reason: "already cleared and taxiing", route: this.names([at.leg, ...at.remaining]) });
+      // A pilot calling in while still rolling off the runway: take over from where it is.
+      const rolling = this.rollOff.delete(id);
+      if (rolling) this.then.delete(id);
+      if (at && same && !rolling) return base("allow", { reason: "already cleared and taxiing", route: this.names([at.leg, ...at.remaining]) });
 
       if (!same) {
         flight.gate = gate;
@@ -286,12 +318,29 @@ export class World {
       const candidates = await this.candidates(origin, flight.gate, !this.refused.has(id));
       let occupied = false;
       for (const c of candidates) {
-        const plan = buildPlan(c.rest, config.stepM, c.first);
+        let plan = buildPlan(c.rest, config.stepM, c.first);
         if (!plan.wps.length) { await this.arrive(id); return outcome("arrived"); }
-        const { action, verdict } = await this.request(id, flight, plan, c.first?.line);
+        // A route over the runway crossing is cleared as far as the hold short line. The crossing itself waits for the supervisor.
+        const legs = [...(c.first ? [c.first.step] : []), ...c.rest];
+        const k = legs.findIndex((l) => (RESTRICTED as readonly string[]).includes(l.edge.kind));
+        let holdShort: Step | undefined;
+        if (k > 0) {
+          const before = legs.slice(0, k);
+          holdShort = before[k - 1];
+          plan = buildPlan(c.first ? before.slice(1) : before, config.stepM, c.first);
+        }
+        const stop = holdShort ? this.node(holdShort.forward ? holdShort.edge.to : holdShort.edge.from) : undefined;
+        const { action, verdict } = await this.request(id, flight, plan, c.first?.line, stop?._id);
         const asked = { action_id: action._id, policy_ids: verdict.policy_ids, reason: verdict.reason, route: this.names(plan.legs) };
         if (verdict.decision === "allow") {
-          await this.go(id, plan, origin.position);
+          await this.go(id, plan, origin.position, stop && (async () => {
+            // At the hold short line: ask for the crossing. That needs the supervisor, so the flight waits there.
+            await this.dispatch(id, { node: stop._id, position: stop.location.coordinates });
+          }));
+          if (stop) {
+            this.record(CONTROLLER, "route.replanned", "vehicles", id, `${flight.name} cleared to hold short of the runway at ${stop.name}; the crossing needs supervisor approval (${action._id})`);
+            return outcome("allow", { ...asked, hold_short: stop.name, reason: `cleared to hold short of the runway at ${stop.name}; the runway crossing needs supervisor approval` });
+          }
           if (why) this.record(CONTROLLER, "route.replanned", "vehicles", id, `${flight.name} ${why}: now to ${this.node(flight.gate).name} via ${this.via(plan.legs)} (${action._id})`);
           return outcome("allow", asked);
         }
@@ -312,9 +361,9 @@ export class World {
   }
 
   /** Ask the policy gate. The decision is recorded as an action whatever it is. */
-  private async request(id: string, flight: Flight, plan: Plan, ahead?: Position[]) {
+  private async request(id: string, flight: Flight, plan: Plan, ahead?: Position[], to?: NodeId) {
     const edges = plan.legs.map((l) => l.edge._id);
-    const result = await this.gate.decide({ agent_id: CONTROLLER, vehicle_id: id, gate: flight.gate, edges, ahead });
+    const result = await this.gate.decide({ agent_id: CONTROLLER, vehicle_id: id, gate: flight.gate, edges, ahead, to });
     const { action, verdict } = result;
     this.record(CONTROLLER, "action.decided", "actions", action._id,
       `${action._id} ${flight.name} to ${this.node(flight.gate).name} via ${this.via(plan.legs)}: ${verdict.decision.toUpperCase()} [${verdict.policy_ids.join(", ")}] ${verdict.reason}`);
@@ -353,7 +402,8 @@ export class World {
   }
 
   /** Allowed: write the route and start moving. */
-  private async go(id: string, plan: Plan, position: Position) {
+  private async go(id: string, plan: Plan, position: Position, then?: () => Promise<void>) {
+    if (then) this.then.set(id, then); else this.then.delete(id);
     this.parked.delete(id);
     this.held.delete(id);
     await this.database.col.vehicles.updateOne({ _id: id }, { $set: { route: plan.legs.map((l) => l.edge._id), status: "moving", heading: plan.wps[0].heading, ts: new Date() } });

@@ -247,8 +247,8 @@ export function AirportMap({ graph }: { graph: Graph }) {
 
   return (
     <div className="relative size-full">
-    <HaltBanner />
     <ClosureControls message={dropError} clearMessage={() => setDropError(null)} />
+    <HaltBanner />
     <svg ref={svgRef} className="size-full" style={dropMode ? { cursor: "crosshair" } : undefined}
       onClick={dropMode ? drop : () => store.selectZone(null)} viewBox={`${x} ${y} ${w} ${h}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Airport diagram">
       <BaseLayer graph={graph} projection={projection} />
