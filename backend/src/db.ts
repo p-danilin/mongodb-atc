@@ -4,7 +4,7 @@ import { config } from "./config";
 /** Every document uses a string `_id`. Dates are stored as Date and sent as ISO strings (see `wire`). */
 export interface Doc { _id: string; [key: string]: any }
 
-export const COLLECTIONS = ["nodes", "edges", "zones", "identities", "vehicles", "policies", "actions", "ledger", "runs"] as const;
+export const COLLECTIONS = ["nodes", "edges", "zones", "identities", "vehicles", "policies", "actions", "approvals", "ledger", "runs"] as const;
 export type CollectionName = (typeof COLLECTIONS)[number];
 
 export interface Database {

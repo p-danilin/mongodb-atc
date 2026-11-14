@@ -1,7 +1,7 @@
 /** Brain: the Ground Control API server. `npm run dev`. Contract: docs/contract/api.md. */
 import http from "node:http";
 import { WebSocketServer } from "ws";
-import type { CreateZoneRequest, SpawnFlightRequest } from "../../docs/contract/types";
+import type { CreateZoneRequest, HaltRequest, ResolveApprovalRequest, SpawnFlightRequest } from "../../docs/contract/types";
 import { config } from "./config";
 import { connect } from "./db";
 import { Hub } from "./hub";
@@ -22,7 +22,7 @@ sim.start();
 type Handler = (body: any, url: URL, params: Record<string, string>) => unknown | Promise<unknown>;
 const NO_CONTENT = Symbol("204");
 
-/** Level 2 adds approvals, halt, resume and redteam. A `:name` path segment is passed in `params`. */
+/** The contract in docs/contract/api.md. A `:name` path segment is passed in `params`. */
 const routes: Record<string, Handler> = {
   "GET /api/graph": () => graph,
   "GET /api/state": () => world.snapshot(),
@@ -36,6 +36,15 @@ const routes: Record<string, Handler> = {
   "POST /api/zones": (b: CreateZoneRequest) => world.createZone(b),
   "DELETE /api/zones/:id": async (_b, _url, p) => { await world.removeZone(p.id); return NO_CONTENT; },
   "GET /api/ledger": (_b, url) => world.ledgerFor(url.searchParams.get("run_id") ?? undefined),
+  "GET /api/approvals": (_b, url) => {
+    const status = url.searchParams.get("status") ?? "pending";
+    if (status !== "pending") throw new HttpError(400, "bad_request", 'only status=pending is supported');
+    return world.pendingApprovals();
+  },
+  "POST /api/approvals/:id": (b: ResolveApprovalRequest, _url, p) => world.resolveApproval(p.id, b),
+  "POST /api/run/halt": (b: HaltRequest | undefined) => world.halt(typeof b?.reason === "string" ? b.reason : undefined),
+  "POST /api/run/resume": () => world.resume(),
+  "POST /api/redteam/bad-route": () => world.redteam(),
 };
 
 const table = Object.entries(routes).map(([key, handler]) => {

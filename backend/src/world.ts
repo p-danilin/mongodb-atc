@@ -1,10 +1,13 @@
 import seed from "../../docs/contract/seed.json" with { type: "json" };
-import type { Bounds, CreateZoneRequest, EdgeId, Graph, LedgerEntry, NodeId, Position, Run, Snapshot, Vehicle, Zone } from "../../docs/contract/types";
+import type {
+  Action, Bounds, CreateZoneRequest, EdgeId, Graph, LedgerEntry, NodeId, Position, ResolveApprovalRequest, Resolution, Run, Snapshot, Vehicle, Zone,
+} from "../../docs/contract/types";
 import { config } from "./config";
 import { wire, type Database, type Doc } from "./db";
+import { Gate, type Verdict } from "./gate";
 import type { Hub } from "./hub";
 import type { Ledger } from "./ledger";
-import { buildPlan, distM, findRoute, lengthM, orientRoute, oriented, splitAt, type Plan, type Step } from "./planner";
+import { buildPlan, distM, findRoute, lengthM, orientRoute, oriented, planFrom, splitAt, type Plan, type Step } from "./planner";
 import type { Sim, Where } from "./sim";
 
 export class HttpError extends Error {
@@ -22,39 +25,59 @@ export async function loadGraph(database: Database): Promise<Graph> {
 }
 
 const num = (id: string) => Number(id.split("-")[1]) || 0;
+const pad = (n: number, width: number) => String(n).padStart(width, "0");
 const SUPERVISOR = "supervisor-1"; // there is no auth: the server acts as the supervisor for every human action
 const CONTROLLER = "controller-1";
-const NO_RUNWAY = ["runway", "runway_crossing"] as const; // until the approval flow exists (Level 2)
+/** Edge kinds outside the controller's clearances. A route using one needs supervisor approval. */
+const RESTRICTED = ["runway", "runway_crossing"] as const;
 const MAX_TTL_S = 3600;
+const ARRIVALS: NodeId = "RX1";
 
 interface ActiveZone { doc: Doc; edges: Set<EdgeId>; timer: NodeJS.Timeout }
 interface Flight { name: string; gate: NodeId }
+/** Where a route starts: a vehicle standing on a node, or one part-way along an edge. */
+type Origin = { node: NodeId; position: Position } | Where;
+interface Candidate { first?: { line: Position[]; step: Step }; rest: Step[]; length: number; needsApproval: boolean }
 
-/** Scenario operations behind the API. Everything it changes, it changes by writing to Mongo. */
+/**
+ * Scenario operations behind the API, and the controller's behaviour. Everything it changes, it changes
+ * by writing to Mongo, and it never moves a vehicle without an `allow` from the policy gate.
+ */
 export class World {
   private run!: Doc;
   private nextVehicle = 1;
   private nextFlight = 101;
   private nextZone = 1;
+  private nextResolution = 1;
   /** Closures in force: not yet expired, not removed. */
   private zones = new Map<string, ActiveZone>();
   private removing = new Set<string>();
   private flights = new Map<string, Flight>();
-  /** Vehicles stopped because no route avoids the closures. Retried whenever a closure goes away. */
-  private held = new Map<string, Where>();
-  /** Zone changes and the replans they cause run one at a time. */
+  /** Where each stationary vehicle that still wants to go somewhere is standing. */
+  private parked = new Map<string, Origin>();
+  /** Vehicles with no permitted route. Retried whenever a closure goes away. */
+  private held = new Set<string>();
+  /** Vehicles whose runway crossing a supervisor refused: do not ask again. */
+  private refused = new Set<string>();
+  /** State changes and the decisions they cause run one at a time. */
   private lock: Promise<unknown> = Promise.resolve();
+  readonly gate: Gate;
 
-  constructor(private database: Database, private hub: Hub, private sim: Sim, private ledger: Ledger, readonly graph: Graph) {}
+  constructor(private database: Database, private hub: Hub, private sim: Sim, private ledger: Ledger, readonly graph: Graph) {
+    this.gate = new Gate(database, graph, { run: () => this.run, activeZones: () => [...this.zones.keys()] });
+  }
 
   // ------------------------------------------------------------------ startup
 
   /** Load the current run (the newest) or create the first one, then pick up what Mongo says is in progress. */
   async init() {
-    const { runs, vehicles, zones, ledger } = this.database.col;
+    const { runs, vehicles, zones, ledger, approvals } = this.database.col;
     const latest = await runs.find().sort({ started_at: -1 }).limit(1).next();
     this.run = latest ?? (await this.newRun(1));
-    await this.ledger.open(this.run._id);
+    this.sim.halted = this.run.status === "halted";
+    this.sim.runId = this.run._id;
+    await Promise.all([this.ledger.open(this.run._id), this.gate.init()]);
+    this.nextResolution = (await approvals.countDocuments()) + 1;
 
     // Zone ids stay unique across runs, because old ledger entries still refer to them.
     const pastZones = await ledger.distinct("ref.id", { "ref.collection": "zones" });
@@ -70,15 +93,13 @@ export class World {
       this.nextFlight = Math.max(this.nextFlight, (Number(String(v.details?.flight ?? "").replace(/\D/g, "")) || 100) + 1);
       if (v.kind !== "aircraft") continue;
       this.flights.set(v._id, { name: v.details.flight, gate: v.details.gate });
-      // A vehicle that was mid-taxi when the server stopped carries on from where Mongo says it is.
-      const steps = v.status === "moving" && v.route.length ? orientRoute(this.graph, v.route, v.details.gate) : null;
-      if (!steps) continue;
-      const plan = buildPlan(steps, config.stepM);
       const at: Position = v.position.coordinates;
-      let i = 0;
-      for (let k = 1; k < plan.wps.length; k++) if (distM(plan.wps[k].position, at) < distM(plan.wps[i].position, at)) i = k;
-      this.sim.follow(v._id, plan, at, i + 1);
-      resumed++;
+      // A vehicle that was mid-taxi when the server stopped carries on from where Mongo says it is.
+      const steps = v.route.length ? orientRoute(this.graph, v.route, v.details.gate) : null;
+      if (steps) { this.sim.follow(v._id, planFrom(steps, at, config.stepM).plan, at); resumed++; continue; }
+      if (distM(at, this.node(v.details.gate).location.coordinates) < 1) continue; // parked at its gate
+      this.parked.set(v._id, this.nearest(at));
+      if (v.status === "idle") this.held.add(v._id);
     }
     if (this.zones.size) await this.replanAffected();
     return { resumed, zones: this.zones.size };
@@ -87,31 +108,35 @@ export class World {
   // ------------------------------------------------------------------ reads
 
   currentRun(): Run { return wire<Run>(this.run); }
+  private get halted() { return this.run.status === "halted"; }
 
   /** `seq` is read before Mongo, so the snapshot is never older than the seq it claims. */
   async snapshot(): Promise<Snapshot> {
     const seq = this.hub.seq;
-    const vehicles = await this.database.col.vehicles.find().sort({ _id: 1 }).toArray();
+    const [vehicles, pending] = await Promise.all([this.database.col.vehicles.find().sort({ _id: 1 }).toArray(), this.pendingApprovals()]);
     const zones = [...this.zones.values()].map((z) => z.doc);
-    return { seq, vehicles: wire(vehicles), zones: wire(zones), pending_approvals: [], run: this.currentRun() };
+    return { seq, vehicles: wire(vehicles), zones: wire(zones), pending_approvals: pending, run: this.currentRun() };
   }
 
   async ledgerFor(runId?: string): Promise<LedgerEntry[]> {
     return wire(await this.database.col.ledger.find({ run_id: runId || this.run._id }).sort({ n: 1 }).toArray());
   }
 
+  /** Actions in this run that asked for a human and have no resolution yet. The server decides this, not the UI. */
+  async pendingApprovals(): Promise<Action[]> {
+    const { actions, approvals } = this.database.col;
+    const resolved = await approvals.distinct("resolves", { run_id: this.run._id });
+    return wire(await actions.find({ run_id: this.run._id, decision: "needs_approval", _id: { $nin: resolved } }).sort({ _id: 1 }).toArray());
+  }
+
   // ------------------------------------------------------------------ flights
 
-  /**
-   * An arriving flight appears at Runway exit 1 and taxis to its gate, avoiding closures.
-   * From Level 2 this becomes an event for the controller agent, and the route goes through the policy gate.
-   */
+  /** An arriving flight appears at Runway exit 1. The controller then requests a route to its gate. */
   async spawnFlight(gate: NodeId, flight?: string): Promise<Vehicle> {
-    const from = this.node("RX1");
+    const from = this.node(ARRIVALS);
     const to = this.graph.nodes.find((n) => n._id === gate && n.type === "gate");
     if (!to) throw new HttpError(400, "bad_request", "gate must be a gate node id");
-    const path = findRoute(this.graph, from._id, gate, { avoidKinds: [...NO_RUNWAY], avoidEdges: this.closedEdges() });
-    if (!path?.length) throw new HttpError(409, "no_route", `No route from ${from.name} to ${to.name} that avoids the runway and active closures`);
+    if (this.halted) throw new HttpError(409, "halted", "The run is halted. Resume it before spawning a flight.");
 
     const id = `V-${this.nextVehicle++}`;
     const name = flight ?? `AC${this.nextFlight++}`;
@@ -121,17 +146,290 @@ export class World {
       { $set: { kind: "vehicle", name, clearances: ["taxiway", "apron"], active: true } },
       { upsert: true },
     );
-    const plan = buildPlan(path, config.stepM);
     const doc: Doc = {
       _id: id, kind: "aircraft", identity_id: identity, run_id: this.run._id,
-      position: from.location, heading: plan.wps[0].heading, route: path.map((p) => p.edge._id),
-      status: "moving", ts: new Date(), details: { flight: name, gate },
+      position: from.location, heading: 180, route: [], status: "idle", ts: new Date(), details: { flight: name, gate },
     };
     await this.database.col.vehicles.insertOne(doc);
     this.flights.set(id, { name, gate });
-    this.sim.follow(id, plan, from.location.coordinates);
-    this.record(SUPERVISOR, "vehicle.spawned", "vehicles", id, `${name} arrived at ${from.name}; taxiing to ${to.name} via ${this.via(path)}`);
+    this.record(SUPERVISOR, "vehicle.spawned", "vehicles", id, `${name} arrived at ${from.name}, bound for ${to.name}`);
+    // The arrival wakes the controller. It runs after the response, so a slow decision never blocks the API.
+    void this.exclusive(() => this.dispatch(id, { node: from._id, position: from.location.coordinates }));
     return wire<Vehicle>(doc);
+  }
+
+  // ------------------------------------------------------------------ the controller
+
+  /**
+   * Get a vehicle moving towards its gate: work out the routes on offer, request them from the policy gate
+   * in order of preference, and act on the answer. Allowed: go. Needs approval: wait for the supervisor.
+   * Denied: try the next. Nothing permitted: hold position.
+   */
+  private async dispatch(id: string, origin: Origin, why?: string) {
+    const flight = this.flights.get(id);
+    if (!flight) return;
+    let lastDenial: Verdict | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const candidates = await this.candidates(origin, flight.gate, !this.refused.has(id));
+      let occupied = false;
+      for (const c of candidates) {
+        const plan = buildPlan(c.rest, config.stepM, c.first);
+        if (!plan.wps.length) { await this.arrive(id); return; }
+        const { action, verdict } = await this.request(id, flight, plan, c.first?.line);
+        if (verdict.decision === "allow") {
+          await this.go(id, plan, origin.position);
+          if (why) this.record(CONTROLLER, "route.replanned", "vehicles", id, `${flight.name} ${why}: now to ${this.node(flight.gate).name} via ${this.via(plan.legs)} (${action._id})`);
+          return;
+        }
+        if (verdict.decision === "needs_approval") { await this.wait(id, origin); return; }
+        lastDenial = verdict;
+        if (verdict.rules.includes("gate_occupied")) { occupied = true; break; }
+      }
+      // The gate is taken: choose another and try once more.
+      if (!(occupied && attempt === 0 && (await this.reassign(id, flight, origin, lastDenial!)))) break;
+    }
+    await this.hold(id, origin, flight, lastDenial);
+  }
+
+  /** Ask the policy gate. The decision is recorded as an action whatever it is. */
+  private async request(id: string, flight: Flight, plan: Plan, ahead?: Position[]) {
+    const edges = plan.legs.map((l) => l.edge._id);
+    const result = await this.gate.decide({ agent_id: CONTROLLER, vehicle_id: id, gate: flight.gate, edges, ahead });
+    const { action, verdict } = result;
+    this.record(CONTROLLER, "action.decided", "actions", action._id,
+      `${action._id} ${flight.name} to ${this.node(flight.gate).name} via ${this.via(plan.legs)}: ${verdict.decision.toUpperCase()} [${verdict.policy_ids.join(", ")}] ${verdict.reason}`);
+    return result;
+  }
+
+  /** The routes on offer from here, best first: those needing no approval, then the rest, each by length. */
+  private async candidates(origin: Origin, gate: NodeId, allowRestricted: boolean): Promise<Candidate[]> {
+    const closed = this.closedEdges();
+    const starts: { first?: Candidate["first"]; node: NodeId; avoid: Set<EdgeId> }[] = [];
+    if ("leg" in origin) {
+      // Part-way along an edge: carry on to the end of it or turn back, whichever stretch is clear.
+      const { edge, forward } = origin.leg;
+      const { before, after } = splitAt(oriented(origin.leg), origin.position);
+      const behind = [...before].reverse();
+      const [aheadBlocked, behindBlocked] = closed.has(edge._id) ? await Promise.all([this.lineBlocked(after), this.lineBlocked(behind)]) : [false, false];
+      const avoid = new Set([...closed, edge._id]);
+      if (!aheadBlocked) starts.push({ first: { line: after, step: origin.leg }, node: forward ? edge.to : edge.from, avoid });
+      if (!behindBlocked) starts.push({ first: { line: behind, step: { edge, forward: !forward } }, node: forward ? edge.from : edge.to, avoid });
+    } else starts.push({ node: origin.node, avoid: closed });
+
+    const out = new Map<string, Candidate>();
+    for (const s of starts) for (const restricted of allowRestricted ? [false, true] : [false]) {
+      const rest = findRoute(this.graph, s.node, gate, { avoidKinds: restricted ? [] : [...RESTRICTED], avoidEdges: s.avoid });
+      if (!rest) continue;
+      const first = s.first && s.first.line.length > 1 ? s.first : undefined;
+      const legs = [...(first ? [first.step] : []), ...rest];
+      const key = legs.map((l) => l.edge._id).join();
+      const c: Candidate = {
+        first, rest, length: (first ? lengthM(first.line) : 0) + rest.reduce((sum, r) => sum + r.edge.length_m, 0),
+        needsApproval: legs.some((l) => (RESTRICTED as readonly string[]).includes(l.edge.kind)),
+      };
+      if (!out.has(key)) out.set(key, c);
+    }
+    return [...out.values()].sort((a, b) => Number(a.needsApproval) - Number(b.needsApproval) || a.length - b.length);
+  }
+
+  /** Allowed: write the route and start moving. */
+  private async go(id: string, plan: Plan, position: Position) {
+    this.parked.delete(id);
+    this.held.delete(id);
+    await this.database.col.vehicles.updateOne({ _id: id }, { $set: { route: plan.legs.map((l) => l.edge._id), status: "moving", heading: plan.wps[0].heading, ts: new Date() } });
+    this.sim.follow(id, plan, position);
+  }
+
+  private async arrive(id: string) {
+    this.sim.drop(id);
+    this.parked.delete(id);
+    this.held.delete(id);
+    await this.database.col.vehicles.updateOne({ _id: id }, { $set: { route: [], status: "idle", ts: new Date() } });
+  }
+
+  /** Needs approval: stop where we are until a supervisor answers. */
+  private async wait(id: string, origin: Origin) {
+    this.sim.drop(id);
+    this.parked.set(id, origin);
+    this.held.delete(id);
+    await this.database.col.vehicles.updateOne({ _id: id }, { $set: { route: [], status: "awaiting_approval", ts: new Date() } });
+  }
+
+  /** Nothing permitted: stop and wait for the airport to change. */
+  private async hold(id: string, origin: Origin, flight: Flight, denial?: Verdict) {
+    this.sim.drop(id);
+    this.parked.set(id, origin);
+    const already = this.held.has(id);
+    this.held.add(id);
+    await this.database.col.vehicles.updateOne({ _id: id }, { $set: { route: [], status: "idle", ts: new Date() } });
+    if (already) return; // still stuck: already recorded
+    const because = denial ? `request denied (${denial.reason})` : this.refused.has(id) ? "the supervisor refused the runway crossing and no other route exists" : "no route avoids the closures in force";
+    this.record(CONTROLLER, "route.replanned", "vehicles", id, `${flight.name} holding position short of ${this.node(flight.gate).name}: ${because}`);
+  }
+
+  /** The requested gate is taken: pick the free gate with the shortest route from here. */
+  private async reassign(id: string, flight: Flight, origin: Origin, denial: Verdict): Promise<boolean> {
+    const taken = new Set<NodeId>(await this.database.col.vehicles.distinct("details.gate", { _id: { $ne: id } }));
+    const options: { gate: NodeId; c: Candidate }[] = [];
+    for (const g of this.graph.nodes.filter((n) => n.type === "gate" && !taken.has(n._id))) {
+      const [best] = await this.candidates(origin, g._id, !this.refused.has(id));
+      if (best) options.push({ gate: g._id, c: best });
+    }
+    const pick = options.sort((a, b) => Number(a.c.needsApproval) - Number(b.c.needsApproval) || a.c.length - b.c.length)[0];
+    if (!pick) return false;
+    const was = this.node(flight.gate).name;
+    flight.gate = pick.gate;
+    await this.database.col.vehicles.updateOne({ _id: id }, { $set: { "details.gate": pick.gate, ts: new Date() } });
+    this.record(CONTROLLER, "route.replanned", "vehicles", id, `${flight.name} reassigned from ${was} to ${this.node(pick.gate).name}: ${denial.reason}`);
+    return true;
+  }
+
+  /** Reroute every moving vehicle whose remaining path touches a closure. */
+  private async replanAffected(becauseOf?: string) {
+    if (this.halted) return; // nothing is granted while halted; `resume` runs this again
+    const closed = this.closedEdges();
+    for (const id of this.sim.ids()) {
+      const at = this.sim.where(id);
+      if (!at) continue;
+      const later = at.remaining.some((s) => closed.has(s.edge._id));
+      if (!later && !closed.has(at.leg.edge._id)) continue;
+      this.sim.pause(id); // hold still while deciding, so the new route starts from where the vehicle really is
+      const here = this.sim.where(id)!;
+      if (!later && !(await this.lineBlocked(splitAt(oriented(here.leg), here.position).after))) {
+        this.sim.unpause(id); // the closure is on this edge but behind the vehicle: nothing to change
+        continue;
+      }
+      await this.dispatch(id, here, `rerouted around ${becauseOf ? `closure ${becauseOf}` : "the closures in force"}`);
+    }
+  }
+
+  private async retryHeld() {
+    if (this.halted) return;
+    for (const id of [...this.held]) {
+      const origin = this.parked.get(id);
+      if (origin) await this.dispatch(id, origin, "resumed after a closure was lifted");
+    }
+  }
+
+  // ------------------------------------------------------------------ approvals
+
+  /** A supervisor answers a `needs_approval` action. The action is never changed: the answer is a new record. */
+  async resolveApproval(actionId: string, req: ResolveApprovalRequest): Promise<Resolution> {
+    if (req?.decision !== "approve" && req?.decision !== "deny") throw new HttpError(400, "bad_request", 'decision must be "approve" or "deny"');
+    if (req.note !== undefined && typeof req.note !== "string") throw new HttpError(400, "bad_request", "note must be a string");
+    return this.exclusive(async () => {
+      const { actions, approvals, vehicles } = this.database.col;
+      const action = await actions.findOne({ _id: actionId });
+      if (!action) throw new HttpError(404, "not_found", `No action ${actionId}`);
+      if (action.decision !== "needs_approval") throw new HttpError(409, "not_pending", `${actionId} was decided "${action.decision}" and needs no approval`);
+      if (action.run_id !== this.run._id) throw new HttpError(409, "not_pending", `${actionId} belongs to an earlier run`);
+      if (this.halted) throw new HttpError(409, "halted", "The run is halted. Resume it before resolving approvals.");
+
+      const resolution: Doc = {
+        _id: `RES-${pad(this.nextResolution, 4)}`, run_id: this.run._id, resolves: actionId, decision: req.decision,
+        resolved_by: SUPERVISOR, ...(req.note ? { note: req.note } : {}), ts: new Date(),
+      };
+      try { await approvals.insertOne(resolution); }
+      catch (e: any) {
+        if (e.code === 11000) throw new HttpError(409, "not_pending", `${actionId} has already been resolved`); // unique index on `resolves`
+        throw e;
+      }
+      this.nextResolution++;
+
+      const id: string = action.payload.vehicle_id;
+      const flight = this.flights.get(id);
+      const vehicle = await vehicles.findOne({ _id: id });
+      this.record(SUPERVISOR, "approval.resolved", "approvals", resolution._id,
+        `${SUPERVISOR} ${req.decision === "approve" ? "approved" : "denied"} ${actionId} (${flight?.name ?? id})${req.note ? `: ${req.note}` : ""}`);
+      if (!flight || !vehicle) return wire<Resolution>(resolution);
+
+      const at: Position = vehicle.position.coordinates;
+      const origin = this.parked.get(id) ?? this.nearest(at);
+      if (req.decision === "deny") {
+        this.refused.add(id);
+        await this.dispatch(id, origin);
+        return wire<Resolution>(resolution);
+      }
+      // Approved. The airport may have changed while it waited, so the gate checks the same route again.
+      const steps = orientRoute(this.graph, action.payload.edges, flight.gate);
+      const { plan, ahead } = steps ? planFrom(steps, at, config.stepM) : { plan: null, ahead: undefined };
+      if (plan?.wps.length && (await this.gate.evaluate({ agent_id: CONTROLLER, vehicle_id: id, gate: flight.gate, edges: action.payload.edges, ahead, approved: true })).decision === "allow") {
+        await this.go(id, plan, at);
+      } else {
+        await this.dispatch(id, origin, "replanned after approval, because the approved route is no longer permitted");
+      }
+      return wire<Resolution>(resolution);
+    });
+  }
+
+  // ------------------------------------------------------------------ halt and resume
+
+  /** The kill switch: every vehicle freezes, and the gate denies every request until the run resumes. */
+  async halt(reason?: string): Promise<Run> {
+    return this.exclusive(async () => {
+      if (this.halted) throw new HttpError(409, "halted", "The run is already halted");
+      this.sim.halted = true;
+      const now = new Date();
+      this.run = { ...this.run, status: "halted", halted_by: SUPERVISOR, halted_at: now };
+      await this.database.col.runs.updateOne({ _id: this.run._id }, { $set: { status: "halted", halted_by: SUPERVISOR, halted_at: now } });
+      await this.database.col.vehicles.updateMany({}, { $set: { status: "halted", ts: now } });
+      this.record(SUPERVISOR, "run.halted", "runs", this.run._id, `Run ${this.run._id} halted by ${SUPERVISOR}${reason ? `: ${reason}` : ""}`);
+      return this.currentRun();
+    });
+  }
+
+  async resume(): Promise<Run> {
+    return this.exclusive(async () => {
+      if (!this.halted) throw new HttpError(409, "not_halted", "The run is not halted");
+      const { _id, started_at } = this.run;
+      this.run = { _id, status: "running", started_at };
+      await this.database.col.runs.updateOne({ _id }, { $set: { status: "running" }, $unset: { halted_by: "", halted_at: "" } });
+      // Each vehicle goes back to what it was doing.
+      const waiting = new Set((await this.pendingApprovals()).map((a) => a.payload.vehicle_id));
+      const now = new Date();
+      for (const v of await this.database.col.vehicles.find({}, { projection: { _id: 1 } }).toArray()) {
+        const status = this.sim.has(v._id) ? "moving" : waiting.has(v._id) ? "awaiting_approval" : "idle";
+        await this.database.col.vehicles.updateOne({ _id: v._id }, { $set: { status, ts: now } });
+      }
+      this.sim.halted = false;
+      this.record(SUPERVISOR, "run.resumed", "runs", _id, `Run ${_id} resumed by ${SUPERVISOR}`);
+      // Closures may have come and gone while halted.
+      await this.replanAffected();
+      await this.retryHeld();
+      return this.currentRun();
+    });
+  }
+
+  // ------------------------------------------------------------------ red team
+
+  /**
+   * Ask the gate for a route straight through a closure, as the controller, to show it being refused.
+   * The request is real and so is the record; the route is never applied.
+   */
+  async redteam(): Promise<Action> {
+    return this.exclusive(async () => {
+      const closed = [...this.zones.values()].flatMap((z) => [...z.edges].map((e) => this.edge(e)));
+      const edge = closed.find((e) => !(RESTRICTED as readonly string[]).includes(e.kind)) ?? closed[0];
+      if (!edge) throw new HttpError(409, "no_closure", "No closure is blocking a taxiway. Drop a closure first.");
+      const id = this.sim.ids()[0] ?? [...this.flights.keys()][0];
+      const flight = id ? this.flights.get(id) : undefined;
+      const vehicle = id ? await this.database.col.vehicles.findOne({ _id: id }) : null;
+      if (!id || !flight || !vehicle) throw new HttpError(409, "no_vehicle", "No vehicle to route. Spawn a flight first.");
+
+      const at = this.sim.where(id);
+      const start = at ? (at.leg.forward ? at.leg.edge.to : at.leg.edge.from) : this.nearest(vehicle.position.coordinates).node;
+      const through = [true, false].flatMap((forward) => {
+        const [a, b] = forward ? [edge.from, edge.to] : [edge.to, edge.from];
+        const lead = findRoute(this.graph, start, a, { avoidKinds: [...RESTRICTED], avoidEdges: [edge._id] });
+        const tail = findRoute(this.graph, b, flight.gate, { avoidKinds: [...RESTRICTED], avoidEdges: [edge._id] });
+        return lead && tail ? [[...lead, { edge, forward }, ...tail]] : [];
+      }).sort((x, y) => x.length - y.length)[0] ?? [{ edge, forward: true }];
+
+      const { action, verdict } = await this.gate.decide({ agent_id: CONTROLLER, vehicle_id: id, gate: flight.gate, edges: through.map((s) => s.edge._id) });
+      this.record(CONTROLLER, "action.decided", "actions", action._id,
+        `${action._id} RED TEAM: ${flight.name} to ${this.node(flight.gate).name} via ${this.via(through)}, through a closure: ${verdict.decision.toUpperCase()} [${verdict.policy_ids.join(", ")}] ${verdict.reason}`);
+      return wire<Action>(action);
+    });
   }
 
   // ------------------------------------------------------------------ zones
@@ -144,7 +442,7 @@ export class World {
 
     return this.exclusive(async () => {
       const doc: Doc = {
-        _id: `Z-${String(this.nextZone).padStart(3, "0")}`, type: "closure", reason: req.reason.trim(),
+        _id: `Z-${pad(this.nextZone, 3)}`, type: "closure", reason: req.reason.trim(),
         geometry: { type: "Polygon", coordinates: req.geometry.coordinates }, created_by: SUPERVISOR,
         expires_at: new Date(Date.now() + req.ttl_seconds * 1000),
       };
@@ -168,8 +466,7 @@ export class World {
   async removeZone(id: string): Promise<void> {
     if (!this.zones.has(id)) throw new HttpError(404, "not_found", `No active zone ${id}`);
     return this.exclusive(async () => {
-      const zone = this.zones.get(id);
-      if (!zone) throw new HttpError(404, "not_found", `No active zone ${id}`);
+      if (!this.zones.has(id)) throw new HttpError(404, "not_found", `No active zone ${id}`);
       this.deactivate(id);
       this.removing.add(id); // so the change stream reports this delete as `zone.removed`
       await this.database.col.zones.deleteOne({ _id: id });
@@ -234,89 +531,23 @@ export class World {
     return hit !== null;
   }
 
-  // ------------------------------------------------------------------ replanning
-
-  /** Reroute every moving vehicle whose remaining path touches a closure. */
-  private async replanAffected(becauseOf?: string) {
-    const closed = this.closedEdges();
-    for (const id of this.sim.ids()) {
-      const at = this.sim.where(id);
-      if (!at) continue;
-      if (!closed.has(at.leg.edge._id) && !at.remaining.some((s) => closed.has(s.edge._id))) continue;
-      this.sim.pause(id); // hold still while we plan, so the new route starts from where the vehicle really is
-      await this.reroute(id, this.sim.where(id)!, closed, becauseOf);
-    }
-  }
-
-  private async retryHeld() {
-    const closed = this.closedEdges();
-    for (const [id, at] of [...this.held]) await this.reroute(id, at, closed);
-  }
-
-  /**
-   * Plan from a position part-way along an edge. The vehicle may carry on to the end of its edge or turn
-   * back to the start of it, whichever stretch is clear and gives the shorter route. No clear route: hold.
-   */
-  private async reroute(id: string, at: Where, closed: Set<EdgeId>, becauseOf?: string) {
-    const flight = this.flights.get(id);
-    if (!flight) { this.sim.unpause(id); return; }
-    const { edge, forward } = at.leg;
-    const { before, after } = splitAt(oriented(at.leg), at.position);
-    const behind = [...before].reverse();
-    const onClosed = closed.has(edge._id);
-    const [aheadBlocked, behindBlocked] = onClosed ? await Promise.all([this.lineBlocked(after), this.lineBlocked(behind)]) : [false, false];
-
-    if (!aheadBlocked && !this.held.has(id) && !at.remaining.some((s) => closed.has(s.edge._id))) {
-      this.sim.unpause(id); // the closure is on this edge but behind the vehicle: nothing to change
-      return;
-    }
-
-    const avoid = { avoidKinds: [...NO_RUNWAY], avoidEdges: new Set([...closed, edge._id]) };
-    const options: { first: { line: Position[]; step: Step }; rest: Step[]; length: number }[] = [];
-    const consider = (line: Position[], step: Step, from: NodeId) => {
-      const rest = findRoute(this.graph, from, flight.gate, avoid);
-      if (rest) options.push({ first: { line, step }, rest, length: lengthM(line) + rest.reduce((sum, s) => sum + s.edge.length_m, 0) });
-    };
-    if (!aheadBlocked) consider(after, at.leg, forward ? edge.to : edge.from);
-    if (!behindBlocked) consider(behind, { edge, forward: !forward }, forward ? edge.from : edge.to);
-    const best = options.sort((a, b) => a.length - b.length)[0];
-    const gateName = this.node(flight.gate).name;
-    const why = becauseOf ? `closure ${becauseOf}` : "the closures in force";
-
-    if (!best) {
-      this.sim.drop(id);
-      if (this.held.has(id)) return; // still stuck: already recorded
-      this.held.set(id, at);
-      await this.database.col.vehicles.updateOne({ _id: id }, { $set: { status: "idle", route: [], ts: new Date() } });
-      this.record(CONTROLLER, "route.replanned", "vehicles", id, `${flight.name} holding position: no route to ${gateName} avoids ${why}`);
-      return;
-    }
-
-    const plan: Plan = buildPlan(best.rest, config.stepM, best.first);
-    const wasHeld = this.held.delete(id);
-    const fields: Record<string, unknown> = plan.wps.length
-      ? { route: plan.legs.map((l) => l.edge._id), status: "moving", heading: plan.wps[0].heading, ts: new Date() }
-      : { route: [], status: "idle", ts: new Date() };
-    await this.database.col.vehicles.updateOne({ _id: id }, { $set: fields });
-    this.sim.follow(id, plan, at.position);
-    this.record(CONTROLLER, "route.replanned", "vehicles", id,
-      wasHeld ? `${flight.name} resumed to ${gateName} via ${this.via(plan.legs)}: a closure was lifted`
-              : `${flight.name} rerouted to ${gateName} via ${this.via(plan.legs)} to avoid ${why}`);
-  }
-
   // ------------------------------------------------------------------ runs
 
-  /** Clear the scenario and open a new run. Earlier runs and their ledgers are kept, so they stay reviewable. */
+  /** Clear the scenario and open a new run. Earlier runs, their actions and their ledgers are kept, so they stay reviewable. */
   async reset(): Promise<Run> {
     return this.exclusive(async () => {
       await this.sim.clear();
       for (const id of [...this.zones.keys()]) this.deactivate(id); // their deletes are then silent
+      this.parked.clear();
       this.held.clear();
+      this.refused.clear();
       this.flights.clear();
       await Promise.all([this.database.col.vehicles.deleteMany({}), this.database.col.zones.deleteMany({})]);
       this.nextVehicle = 1;
       this.nextFlight = 101;
       this.run = await this.newRun(num(this.run._id) + 1);
+      this.sim.halted = false;
+      this.sim.runId = this.run._id;
       await this.ledger.open(this.run._id);
       return this.currentRun();
     });
@@ -332,7 +563,7 @@ export class World {
 
   private exclusive<T>(fn: () => Promise<T>): Promise<T> {
     const result = this.lock.then(fn);
-    this.lock = result.catch((e) => { if (!(e instanceof HttpError)) console.error("zone operation failed:", e); });
+    this.lock = result.catch((e) => { if (!(e instanceof HttpError)) console.error("operation failed:", e); });
     return result;
   }
 
@@ -343,4 +574,8 @@ export class World {
   private node(id: NodeId) { return this.graph.nodes.find((n) => n._id === id)!; }
   private edge(id: EdgeId) { return this.graph.edges.find((e) => e._id === id)!; }
   private via(path: Step[]) { return path.map((s) => s.edge.name).join(", ") || "its current position"; }
+  private nearest(position: Position): { node: NodeId; position: Position } {
+    const node = this.graph.nodes.reduce((a, b) => (distM(a.location.coordinates, position) <= distM(b.location.coordinates, position) ? a : b));
+    return { node: node._id, position };
+  }
 }

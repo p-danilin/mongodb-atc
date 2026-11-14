@@ -85,6 +85,9 @@ function distToSegmentM(p: Position, a: Position, b: Position): number {
   return Math.hypot(px - bx * t, py - by * t) * M_PER_DEG_LAT;
 }
 
+export const distToPolylineM = (p: Position, coords: Position[]) =>
+  Math.min(...coords.slice(1).map((c, i) => distToSegmentM(p, coords[i], c)));
+
 /**
  * Split a polyline at a position on it: `before` runs from the start to the position, `after` from the
  * position to the end. Either may be a single point when the position is at an end.
@@ -127,4 +130,17 @@ export function buildPlan(rest: Step[], stepM: number, first?: { line: Position[
   if (first && first.line.length > 1) { wps.push(...waypointsAlong(first.line, first.step.edge._id, 0, stepM)); legs.push(first.step); }
   for (const step of rest) { wps.push(...waypointsAlong(oriented(step), step.edge._id, legs.length, stepM)); legs.push(step); }
   return { legs, wps };
+}
+
+/**
+ * Pick up a route from wherever the vehicle is on it: earlier edges are dropped and the edge it is on
+ * is travelled from its position. `ahead` is that remaining stretch (undefined when it starts at a node).
+ */
+export function planFrom(steps: Step[], position: Position, stepM: number): { plan: Plan; ahead?: Position[] } {
+  if (!steps.length) return { plan: { legs: [], wps: [] } };
+  let k = 0;
+  for (let i = 1; i < steps.length; i++)
+    if (distToPolylineM(position, oriented(steps[i])) < distToPolylineM(position, oriented(steps[k]))) k = i;
+  const line = splitAt(oriented(steps[k]), position).after;
+  return { plan: buildPlan(steps.slice(k + 1), stepM, { line, step: steps[k] }), ahead: line.length > 1 ? line : undefined };
 }

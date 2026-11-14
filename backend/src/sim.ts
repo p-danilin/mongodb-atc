@@ -16,6 +16,10 @@ export class Sim {
   private tracks = new Map<string, Track>();
   private timer: NodeJS.Timeout | null = null;
   private ticking: Promise<void> | null = null;
+  /** The kill switch: while true, no vehicle moves. */
+  halted = false;
+  /** Position writes only apply to vehicles of this run, so a stale writer can never move a later run's vehicle. */
+  runId = "";
 
   constructor(private database: Database) {}
 
@@ -40,6 +44,7 @@ export class Sim {
   }
 
   ids() { return [...this.tracks.keys()]; }
+  has(vehicleId: string) { return this.tracks.has(vehicleId); }
 
   where(vehicleId: string): Where | null {
     const t = this.tracks.get(vehicleId);
@@ -63,6 +68,7 @@ export class Sim {
 
   private async tick() {
     const writes: Promise<unknown>[] = [];
+    if (this.halted) return;
     for (const [id, t] of this.tracks) {
       if (t.paused) continue;
       const w = t.wps[t.i++];
@@ -71,7 +77,7 @@ export class Sim {
       if (done) this.tracks.delete(id);
       const set: Partial<Doc> = { position: { type: "Point", coordinates: w.position }, heading: w.heading, ts: new Date() };
       if (done) { set.status = "idle"; set.route = []; }
-      writes.push(this.database.col.vehicles.updateOne({ _id: id }, { $set: set }));
+      writes.push(this.database.col.vehicles.updateOne({ _id: id, run_id: this.runId }, { $set: set }));
     }
     await Promise.all(writes);
   }

@@ -37,16 +37,23 @@ export function startRelay(database: Database, hub: Hub, world: World) {
         const type = world.zoneDeleted(String(ev.documentKey._id));
         if (type) hub.emit(type, { _id: String(ev.documentKey._id) });
       }
+    } else if (coll === "actions") {
+      // Actions are insert-only: every decision the gate makes is announced once.
+      if (op === "insert" && doc) {
+        hub.emit("action.decided", doc);
+        if (doc.decision === "needs_approval") hub.emit("approval.requested", doc);
+      }
+    } else if (coll === "approvals") {
+      if (op === "insert" && doc) hub.emit("approval.resolved", doc);
     } else if (coll === "ledger") {
       if (op === "insert" && doc) hub.emit("ledger.appended", doc);
     }
-    // Level 2 adds actions and approvals.
   }
 
   function open() {
     if (stopped) return;
     stream = database.db.watch<Doc>(
-      [{ $match: { "ns.coll": { $in: ["vehicles", "runs", "zones", "actions", "ledger"] } } }],
+      [{ $match: { "ns.coll": { $in: ["vehicles", "runs", "zones", "actions", "approvals", "ledger"] } } }],
       { fullDocument: "updateLookup", ...(token ? { resumeAfter: token } : {}) },
     );
     stream.on("change", (ev) => { token = ev._id; relay(ev); });
