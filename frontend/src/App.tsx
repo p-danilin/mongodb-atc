@@ -7,6 +7,7 @@ import { AirportMap } from "./components/AirportMap";
 import { ApprovalQueue, ApprovalsChip, PendingCount } from "./components/ApprovalQueue";
 import { Feed } from "./components/Feed";
 import { ConnectionIndicator, LegendCard, RedTeamAlert, RunControls, RunStatus, ScenarioCard } from "./components/Panels";
+import { VoicePanel } from "./components/VoicePanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -58,6 +59,7 @@ export default function App() {
           </main>
           <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto [&>*]:shrink-0">
             <ScenarioCard gates={gates} />
+            <VoicePanel />
             <LegendCard />
             <RedTeamAlert />
             <Card size="sm">

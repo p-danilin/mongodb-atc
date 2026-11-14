@@ -28,6 +28,15 @@ interface Context {
   edges: GraphEdge[];
 }
 
+/**
+ * Mongo filter for vehicles that hold a gate: cleared to it (taxiing or waiting on an approval) or parked on it.
+ * A flight that is merely bound for a gate and has not been cleared yet does not hold it.
+ */
+export const holdsGate = (gate: { _id: NodeId; location: { coordinates: Position } }) => ({
+  "details.gate": gate._id,
+  $or: [{ status: { $in: ["moving", "awaiting_approval"] } }, { "position.coordinates": gate.location.coordinates }],
+});
+
 /** What the gate needs to know about the world right now. */
 export interface GateState {
   run(): Doc;
@@ -86,8 +95,8 @@ export class Gate {
     },
 
     gate_occupied: async ({ req }) => {
-      const other = await this.database.col.vehicles.findOne({ _id: { $ne: req.vehicle_id }, "details.gate": req.gate });
       const gate = this.graph.nodes.find((n) => n._id === req.gate);
+      const other = gate ? await this.database.col.vehicles.findOne({ _id: { $ne: req.vehicle_id }, ...holdsGate(gate) }) : null;
       return other ? `${gate?.name ?? req.gate} is assigned to ${other.details.flight}` : null;
     },
 

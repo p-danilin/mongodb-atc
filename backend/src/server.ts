@@ -6,6 +6,7 @@ import { config } from "./config";
 import { connect } from "./db";
 import { Hub } from "./hub";
 import { Ledger } from "./ledger";
+import { gateId, handleMcp } from "./mcp";
 import { Sim } from "./sim";
 import { startRelay } from "./stream";
 import { HttpError, World, loadGraph } from "./world";
@@ -31,8 +32,13 @@ const routes: Record<string, Handler> = {
   "POST /api/flights": (b: SpawnFlightRequest) => {
     if (typeof b?.gate !== "string") throw new HttpError(400, "bad_request", "gate is required");
     if (b.flight !== undefined && typeof b.flight !== "string") throw new HttpError(400, "bad_request", "flight must be a string");
-    return world.spawnFlight(b.gate, b.flight);
+    // `hold` (not in the contract): the flight waits at the runway exit for its pilot to call in.
+    return world.spawnFlight(b.gate, b.flight, typeof (b as any).hold === "boolean" ? (b as any).hold : undefined);
   },
+  // The controller's tools as plain HTTP, mirroring the MCP tools in mcp.ts.
+  "GET /api/pilot/state": () => world.airportState(),
+  "POST /api/pilot/taxi": (b: { flight: string; gate?: string }) => world.requestTaxi(b?.flight, gateId(b?.gate)),
+  "GET /api/pilot/status/:flight": (_b, _url, p) => world.flightStatus(p.flight),
   "POST /api/zones": (b: CreateZoneRequest) => world.createZone(b),
   "DELETE /api/zones/:id": async (_b, _url, p) => { await world.removeZone(p.id); return NO_CONTENT; },
   "GET /api/ledger": (_b, url) => world.ledgerFor(url.searchParams.get("run_id") ?? undefined),
@@ -67,10 +73,28 @@ const json = (res: http.ServerResponse, status: number, body: unknown) =>
 
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "content-type");
+  res.setHeader("Access-Control-Allow-Headers", "content-type, mcp-session-id, mcp-protocol-version, authorization");
+  res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
   if (req.method === "OPTIONS") { res.writeHead(204).end(); return; }
   const url = new URL(req.url ?? "/", "http://localhost");
+  if (url.pathname === "/mcp") {
+    // The MCP endpoint is reachable from outside through the tunnel, so it can require a token.
+    const token = process.env.MCP_TOKEN;
+    if (token && url.searchParams.get("token") !== token && req.headers.authorization !== `Bearer ${token}`) {
+      json(res, 401, { jsonrpc: "2.0", error: { code: -32001, message: "Unauthorized" }, id: null });
+      return;
+    }
+    try {
+      let raw = "";
+      for await (const chunk of req) raw += chunk;
+      await handleMcp(world, req, res, raw ? JSON.parse(raw) : undefined);
+    } catch (e) {
+      console.error("mcp request failed:", e);
+      if (!res.headersSent) json(res, 400, { jsonrpc: "2.0", error: { code: -32700, message: "Bad request" }, id: null });
+    }
+    return;
+  }
   const found = match(req.method ?? "", url.pathname);
   if (!found) { json(res, 404, { error: { code: "not_found", message: `${req.method} ${url.pathname}` } }); return; }
   try {

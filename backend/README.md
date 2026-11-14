@@ -91,6 +91,36 @@ The controller is deterministic today. The LLM controller replaces the choosing 
 
 `POST /api/run/halt` stops the sim, sets every vehicle to `halted` and makes the gate deny everything (`P-run-halted`). Spawning and resolving approvals return `409` until `POST /api/run/resume`.
 
+### Pilot requests and MCP (`src/mcp.ts`)
+
+For the voice direction, a pilot calls in and the controller agent answers by calling tools. The tools are served over MCP at `POST /mcp` (streamable HTTP, stateless) and mirrored as plain HTTP:
+
+| MCP tool | HTTP | Does |
+| --- | --- | --- |
+| `get_airport_state` | `GET /api/pilot/state` | Flights, free gates, closures, pending approvals, run status |
+| `request_taxi {flight, gate?}` | `POST /api/pilot/taxi` | Requests a route through the policy gate; returns `allow`, `needs_approval`, `deny` or `arrived`, the taxiway names to read back, and the action id |
+| `get_flight_status {flight}` | `GET /api/pilot/status/:flight` | Where the flight is, its route and the last decision, including what the supervisor answered |
+
+No tool writes to Mongo directly: `request_taxi` goes through the gate, which records the action before anything moves.
+
+By default an arriving flight is dispatched at once. For the voice demo start Brain with `AUTO_DISPATCH=0` (or spawn with `"hold": true`), so flights wait at the runway exit until their pilot calls in. A gate counts as taken once a flight is cleared to it or parked on it.
+
+### Voice: Ground on the radio (ElevenLabs Agents)
+
+A pilot speaks (or types) in Tower's "Ground frequency" card; an ElevenLabs agent answers as Ground in ATC phraseology. Its only tools are the three MCP tools above.
+
+```sh
+# 1. Put ELEVENLABS_API_KEY in the repo-level .env (needs the "ElevenLabs Agents: write" permission)
+npm run voice:setup            # creates the agent, writes frontend/.env.local
+AUTO_DISPATCH=0 npm run start  # Brain with held arrivals
+# 2. Restart Tower so it picks up frontend/.env.local, spawn flights, press "Open frequency"
+```
+
+- **How the tools are reached.** By default they are ElevenLabs client tools: Tower runs them in the browser and calls `POST /mcp` on localhost, so Brain is never exposed to the internet. `npm run voice:setup -- https://<public-url>` instead registers `/mcp` with ElevenLabs as an MCP server (needs a tunnel such as `cloudflared tunnel --url http://localhost:4100`; set `MCP_TOKEN` to require a token).
+- **Unprompted calls.** When a supervisor answers an approval, or a closure reroutes a flight, Tower passes the ledger line to the agent as a `[TOWER SYSTEM]` message and Ground radios the pilot.
+- **No microphone, or a loud room:** the card has a text box, and opens in text-only mode when the browser refuses the microphone.
+- `VOICE_LLM` (default `claude-haiku-4-5`) and `VOICE_ID` change the agent's model and voice; re-run `voice:setup` to apply. The prompt is in `src/voice-setup.ts`.
+
 ## Not built
 
 - The LLM controller (needs `ANTHROPIC_API_KEY`).

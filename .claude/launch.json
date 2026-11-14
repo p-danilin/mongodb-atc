@@ -50,6 +50,19 @@
         "--strictPort"
       ],
       "port": 5174
+    },
+    {
+      "name": "brain-voice",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "AUTO_DISPATCH=0",
+        "npm",
+        "--prefix",
+        "backend",
+        "run",
+        "start"
+      ],
+      "port": 4100
     }
   ]
 }

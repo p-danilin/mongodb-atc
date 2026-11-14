@@ -4,7 +4,7 @@ import type {
 } from "../../docs/contract/types";
 import { config } from "./config";
 import { wire, type Database, type Doc } from "./db";
-import { Gate, type Verdict } from "./gate";
+import { Gate, holdsGate, type Verdict } from "./gate";
 import type { Hub } from "./hub";
 import type { Ledger } from "./ledger";
 import { buildPlan, distM, findRoute, lengthM, orientRoute, oriented, planFrom, splitAt, type Plan, type Step } from "./planner";
@@ -37,6 +37,22 @@ interface ActiveZone { doc: Doc; edges: Set<EdgeId>; timer: NodeJS.Timeout }
 interface Flight { name: string; gate: NodeId }
 /** Where a route starts: a vehicle standing on a node, or one part-way along an edge. */
 type Origin = { node: NodeId; position: Position } | Where;
+/** What came of asking for a route, in terms a controller can read back to a pilot. */
+export interface TaxiOutcome {
+  flight: string;
+  /** `arrived`: already at the gate. `deny`: nothing is permitted, the flight holds position. */
+  decision: "allow" | "needs_approval" | "deny" | "arrived";
+  gate: NodeId;
+  gate_name: string;
+  /** Taxiway names in order, e.g. ["H1", "A", "D2", "Taxilane", "Spur 2"]. Empty unless a route was requested. */
+  route: string[];
+  action_id?: string;
+  policy_ids?: string[];
+  reason?: string;
+  /** Set when the requested gate was taken and the controller chose another. */
+  reassigned_from?: string;
+}
+
 interface Candidate { first?: { line: Position[]; step: Step }; rest: Step[]; length: number; needsApproval: boolean }
 
 /**
@@ -132,7 +148,7 @@ export class World {
   // ------------------------------------------------------------------ flights
 
   /** An arriving flight appears at Runway exit 1. The controller then requests a route to its gate. */
-  async spawnFlight(gate: NodeId, flight?: string): Promise<Vehicle> {
+  async spawnFlight(gate: NodeId, flight?: string, hold = !config.autoDispatch): Promise<Vehicle> {
     const from = this.node(ARRIVALS);
     const to = this.graph.nodes.find((n) => n._id === gate && n.type === "gate");
     if (!to) throw new HttpError(400, "bad_request", "gate must be a gate node id");
@@ -153,10 +169,104 @@ export class World {
     await this.database.col.vehicles.insertOne(doc);
     this.flights.set(id, { name, gate });
     this.record(SUPERVISOR, "vehicle.spawned", "vehicles", id, `${name} arrived at ${from.name}, bound for ${to.name}`);
-    // The arrival wakes the controller. It runs after the response, so a slow decision never blocks the API.
-    void this.exclusive(() => this.dispatch(id, { node: from._id, position: from.location.coordinates }));
+    const origin = { node: from._id, position: from.location.coordinates };
+    // Either the flight waits for its pilot to call in, or the arrival itself wakes the controller.
+    // Dispatch runs after the response, so a slow decision never blocks the API.
+    if (hold) this.parked.set(id, origin);
+    else void this.exclusive(() => this.dispatch(id, origin));
     return wire<Vehicle>(doc);
   }
+
+  // ------------------------------------------------------------------ pilot requests
+
+  /**
+   * A pilot asks for taxi: "Ground, AC101, request taxi to gate 2". This is the controller's main tool.
+   * The request goes through the policy gate like every other, and the answer says what to read back.
+   */
+  async requestTaxi(callsign: string, gate?: NodeId): Promise<TaxiOutcome> {
+    if (typeof callsign !== "string" || !callsign.trim()) throw new HttpError(400, "bad_request", "flight is required");
+    if (gate !== undefined && !this.graph.nodes.some((n) => n._id === gate && n.type === "gate")) throw new HttpError(400, "bad_request", `gate must be one of ${this.gates().join(", ")}`);
+    return this.exclusive(async () => {
+      const [id, flight] = this.find(callsign);
+      const vehicle = await this.database.col.vehicles.findOne({ _id: id });
+      if (!vehicle) throw new HttpError(404, "not_found", `No flight ${callsign} on the ground`);
+      const base = (decision: TaxiOutcome["decision"], extra: Partial<TaxiOutcome> = {}): TaxiOutcome =>
+        ({ flight: flight.name, decision, gate: flight.gate, gate_name: this.node(flight.gate).name, route: [], ...extra });
+
+      const same = gate === undefined || gate === flight.gate;
+      const pending = (await this.pendingApprovals()).find((a) => a.payload.vehicle_id === id);
+      if (pending && same) return base("needs_approval", { action_id: pending._id, policy_ids: pending.policy_ids, reason: `${pending.reason} (still waiting for the supervisor)`, route: this.names(pending.payload.edges.map((e) => ({ edge: this.edge(e), forward: true }))) });
+      const at = this.sim.where(id);
+      if (at && same) return base("allow", { reason: "already cleared and taxiing", route: this.names([at.leg, ...at.remaining]) });
+
+      if (!same) {
+        flight.gate = gate;
+        this.refused.delete(id);
+        await this.database.col.vehicles.updateOne({ _id: id }, { $set: { "details.gate": gate, ts: new Date() } });
+      }
+      if (at) this.sim.pause(id);
+      const origin: Origin = this.sim.where(id) ?? this.parked.get(id) ?? this.nearest(vehicle.position.coordinates);
+      return (await this.dispatch(id, origin, at ? "changed destination at the pilot's request" : undefined)) ?? base("deny", { reason: "flight is no longer on the ground" });
+    });
+  }
+
+  /** Where a flight is and what it is cleared for. */
+  async flightStatus(callsign: string) {
+    const [id, flight] = this.find(callsign);
+    const { vehicles, actions, approvals } = this.database.col;
+    const [vehicle, last] = await Promise.all([
+      vehicles.findOne({ _id: id }),
+      actions.find({ run_id: this.run._id, "payload.vehicle_id": id }).sort({ _id: -1 }).limit(1).next(),
+    ]);
+    if (!vehicle) throw new HttpError(404, "not_found", `No flight ${callsign} on the ground`);
+    const resolution = last?.decision === "needs_approval" ? await approvals.findOne({ resolves: last._id }) : null;
+    const at = this.sim.where(id);
+    return {
+      flight: flight.name, status: vehicle.status as string, gate: flight.gate, gate_name: this.node(flight.gate).name,
+      near: this.node(this.nearest(vehicle.position.coordinates).node).name,
+      route: at ? this.names([at.leg, ...at.remaining]) : [],
+      last_decision: last ? {
+        action_id: last._id as string, decision: last.decision as string, policy_ids: last.policy_ids as string[], reason: last.reason as string,
+        // For a `needs_approval` action: what the supervisor said, or "pending".
+        ...(last.decision === "needs_approval" ? { supervisor: resolution ? (resolution.decision as string) : "pending" } : {}),
+      } : null,
+    };
+  }
+
+  /** The picture a controller needs before answering a pilot. */
+  async airportState() {
+    const [vehicles, pending] = await Promise.all([this.database.col.vehicles.find().sort({ _id: 1 }).toArray(), this.pendingApprovals()]);
+    const assigned = await this.takenGates();
+    return {
+      run: { id: this.run._id as string, status: this.run.status as string },
+      flights: vehicles.map((v) => ({
+        flight: v.details?.flight as string, status: v.status as string, gate_name: this.node(v.details.gate).name,
+        near: this.node(this.nearest(v.position.coordinates).node).name,
+      })),
+      free_gates: this.graph.nodes.filter((n) => n.type === "gate" && !assigned.has(n._id)).map((n) => ({ gate: n._id, name: n.name })),
+      closures: [...this.zones.values()].map((z) => ({
+        id: z.doc._id as string, reason: z.doc.reason as string, closes: [...new Set([...z.edges].map((e) => this.edge(e).name))],
+        expires_in_s: Math.max(0, Math.round((z.doc.expires_at.getTime() - Date.now()) / 1000)),
+      })),
+      pending_approvals: pending.map((a) => ({ action_id: a._id, flight: this.flights.get(a.payload.vehicle_id)?.name ?? a.payload.vehicle_id, reason: a.reason })),
+    };
+  }
+
+  private find(callsign: string): [string, Flight] {
+    const want = String(callsign).replace(/[^a-z0-9]/gi, "").toUpperCase();
+    const hit = [...this.flights].find(([, f]) => f.name.replace(/[^a-z0-9]/gi, "").toUpperCase() === want);
+    if (!hit) throw new HttpError(404, "not_found", `No flight ${callsign} on the ground. Flights: ${[...this.flights.values()].map((f) => f.name).join(", ") || "none"}`);
+    return hit;
+  }
+
+  /** Gates held by a vehicle (other than `except`): cleared to it or parked on it. */
+  private async takenGates(except?: string): Promise<Set<NodeId>> {
+    const gates = this.graph.nodes.filter((n) => n.type === "gate");
+    const held = await Promise.all(gates.map((g) => this.database.col.vehicles.findOne({ ...(except ? { _id: { $ne: except } } : {}), ...holdsGate(g) }, { projection: { _id: 1 } })));
+    return new Set(gates.filter((_, i) => held[i]).map((g) => g._id));
+  }
+
+  private gates() { return this.graph.nodes.filter((n) => n.type === "gate").map((n) => n._id); }
 
   // ------------------------------------------------------------------ the controller
 
@@ -165,30 +275,40 @@ export class World {
    * in order of preference, and act on the answer. Allowed: go. Needs approval: wait for the supervisor.
    * Denied: try the next. Nothing permitted: hold position.
    */
-  private async dispatch(id: string, origin: Origin, why?: string) {
+  private async dispatch(id: string, origin: Origin, why?: string): Promise<TaxiOutcome | null> {
     const flight = this.flights.get(id);
-    if (!flight) return;
+    if (!flight) return null;
     let lastDenial: Verdict | undefined;
+    let reassigned_from: string | undefined;
+    const outcome = (decision: TaxiOutcome["decision"], extra: Partial<TaxiOutcome> = {}): TaxiOutcome =>
+      ({ flight: flight.name, decision, gate: flight.gate, gate_name: this.node(flight.gate).name, route: [], ...(reassigned_from ? { reassigned_from } : {}), ...extra });
     for (let attempt = 0; attempt < 2; attempt++) {
       const candidates = await this.candidates(origin, flight.gate, !this.refused.has(id));
       let occupied = false;
       for (const c of candidates) {
         const plan = buildPlan(c.rest, config.stepM, c.first);
-        if (!plan.wps.length) { await this.arrive(id); return; }
+        if (!plan.wps.length) { await this.arrive(id); return outcome("arrived"); }
         const { action, verdict } = await this.request(id, flight, plan, c.first?.line);
+        const asked = { action_id: action._id, policy_ids: verdict.policy_ids, reason: verdict.reason, route: this.names(plan.legs) };
         if (verdict.decision === "allow") {
           await this.go(id, plan, origin.position);
           if (why) this.record(CONTROLLER, "route.replanned", "vehicles", id, `${flight.name} ${why}: now to ${this.node(flight.gate).name} via ${this.via(plan.legs)} (${action._id})`);
-          return;
+          return outcome("allow", asked);
         }
-        if (verdict.decision === "needs_approval") { await this.wait(id, origin); return; }
+        if (verdict.decision === "needs_approval") { await this.wait(id, origin); return outcome("needs_approval", asked); }
         lastDenial = verdict;
         if (verdict.rules.includes("gate_occupied")) { occupied = true; break; }
       }
       // The gate is taken: choose another and try once more.
+      const was = this.node(flight.gate).name;
       if (!(occupied && attempt === 0 && (await this.reassign(id, flight, origin, lastDenial!)))) break;
+      reassigned_from = was;
     }
     await this.hold(id, origin, flight, lastDenial);
+    return outcome("deny", {
+      policy_ids: lastDenial?.policy_ids,
+      reason: lastDenial?.reason ?? (this.refused.has(id) ? "the supervisor refused the runway crossing and there is no other route" : "no route avoids the closures in force"),
+    });
   }
 
   /** Ask the policy gate. The decision is recorded as an action whatever it is. */
@@ -269,7 +389,7 @@ export class World {
 
   /** The requested gate is taken: pick the free gate with the shortest route from here. */
   private async reassign(id: string, flight: Flight, origin: Origin, denial: Verdict): Promise<boolean> {
-    const taken = new Set<NodeId>(await this.database.col.vehicles.distinct("details.gate", { _id: { $ne: id } }));
+    const taken = await this.takenGates(id);
     const options: { gate: NodeId; c: Candidate }[] = [];
     for (const g of this.graph.nodes.filter((n) => n.type === "gate" && !taken.has(n._id))) {
       const [best] = await this.candidates(origin, g._id, !this.refused.has(id));
@@ -573,7 +693,9 @@ export class World {
 
   private node(id: NodeId) { return this.graph.nodes.find((n) => n._id === id)!; }
   private edge(id: EdgeId) { return this.graph.edges.find((e) => e._id === id)!; }
-  private via(path: Step[]) { return path.map((s) => s.edge.name).join(", ") || "its current position"; }
+  /** Taxiway names in travel order, without repeating a name for consecutive edges. */
+  private names(path: Step[]) { return path.map((s) => s.edge.name).filter((n, i, all) => n !== all[i - 1]); }
+  private via(path: Step[]) { return this.names(path).join(", ") || "its current position"; }
   private nearest(position: Position): { node: NodeId; position: Position } {
     const node = this.graph.nodes.reduce((a, b) => (distM(a.location.coordinates, position) <= distM(b.location.coordinates, position) ? a : b));
     return { node: node._id, position };

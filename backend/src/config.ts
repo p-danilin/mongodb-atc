@@ -16,6 +16,11 @@ export const config = {
   port: Number(process.env.PORT ?? 4100),
   /** Sim tick. The UI eases over about one tick. */
   tickMs: Number(process.env.TICK_MS ?? 500),
+  /**
+   * When false, an arriving flight holds at the runway exit until its pilot asks for taxi
+   * (`POST /api/pilot/taxi` or the `request_taxi` MCP tool). Set `AUTO_DISPATCH=0` for the voice demo.
+   */
+  autoDispatch: process.env.AUTO_DISPATCH !== "0",
   /** Metres travelled per tick. */
   stepM: Number(process.env.STEP_M ?? 25),
 };
