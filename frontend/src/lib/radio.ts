@@ -18,12 +18,33 @@ const ALPHABET: Record<string, string> = Object.fromEntries(
 );
 const digits = (s: string) => s.replace(/\d/g, (d) => ` ${DIGITS[Number(d)]} `).replace(/\s+/g, " ").trim();
 
-/** "AC101" -> "Air Canada one zero one". */
+/** Airlines seeded for the demo, spoken by their plain names so anyone listening recognises them. */
+export const AIRLINES: Record<string, string> = {
+  // Canada
+  AC: "Air Canada", WJ: "WestJet", PD: "Porter", TS: "Air Transat",
+  // United States
+  UA: "United", AA: "American", DL: "Delta", WN: "Southwest", B6: "JetBlue", AS: "Alaska",
+  // Europe
+  BA: "British Airways", LH: "Lufthansa", AF: "Air France", KL: "KLM", IB: "Iberia",
+  VS: "Virgin Atlantic", LX: "Swiss", SK: "Scandinavian", FR: "Ryanair", U2: "easyJet",
+};
+
+/** A random flight such as "BA286", never one already used by a flight on the ground. */
+export function randomFlight(taken: ReadonlySet<string> = new Set(), rand: () => number = Math.random): string {
+  const codes = Object.keys(AIRLINES);
+  for (;;) {
+    const name = `${codes[Math.floor(rand() * codes.length)]}${1 + Math.floor(rand() * 999)}`;
+    if (!taken.has(name)) return name;
+  }
+}
+
+/** "BA286" -> "British Airways two eight six". */
 export function spokenCallsign(callsign: string): string {
-  const m = callsign.replace(/\s/g, "").toUpperCase().match(/^([A-Z]+)(\d.*)$/);
-  if (!m) return callsign;
-  const airline = ({ AC: "Air Canada", WJ: "WestJet" } as Record<string, string>)[m[1]] ?? [...m[1]].map((c) => ALPHABET[c]).join(" ");
-  return `${airline} ${digits(m[2])}`;
+  const cs = callsign.replace(/\s/g, "").toUpperCase();
+  const code = Object.keys(AIRLINES).find((c) => cs.startsWith(c) && /^\d/.test(cs.slice(c.length)));
+  if (code) return `${AIRLINES[code]} ${digits(cs.slice(code.length))}`;
+  const m = cs.match(/^([A-Z]+)(\d.*)$/);
+  return m ? `${[...m[1]].map((c) => ALPHABET[c]).join(" ")} ${digits(m[2])}` : callsign;
 }
 
 /** "Gate 2" -> "gate two". */
@@ -110,36 +131,97 @@ export async function runRadioFlow(flight: string, gateId: string, gateName: str
 // ------------------------------------------------------------------ browser side
 
 /** Fetch one transmission's audio from Brain (which holds the ElevenLabs key). Null when voice is unavailable. */
-async function fetchAudio(speaker: "pilot" | "atc", text: string): Promise<Blob | null> {
+async function fetchAudio(speaker: "pilot" | "atc", text: string, voice: number): Promise<Blob | null> {
   try {
-    const res = await fetch(`${API_URL}/api/voice/speak`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ speaker, text }) });
+    const res = await fetch(`${API_URL}/api/voice/speak`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ speaker, text, voice }) });
     return res.ok ? await res.blob() : null;
   } catch { return null; }
 }
 
-function play(blob: Blob): Promise<void> {
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    const done = () => { URL.revokeObjectURL(url); resolve(); };
-    audio.onended = done; audio.onerror = done;
-    audio.play().catch(done);
-  });
+let ctx: AudioContext | null = null;
+
+/** A short burst of noise with a quick decay: the squelch when a mic keys or unkeys. */
+function click(c: AudioContext, out: AudioNode, at: number, level: number) {
+  const len = Math.floor(c.sampleRate * 0.04);
+  const buf = c.createBuffer(1, len, c.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (len / 6));
+  const src = c.createBufferSource(); src.buffer = buf;
+  const g = c.createGain(); g.gain.value = level;
+  src.connect(g).connect(out); src.start(at);
+}
+
+function distortion(amount: number): Float32Array<ArrayBuffer> {
+  const curve = new Float32Array(1024);
+  for (let i = 0; i < curve.length; i++) { const x = (i / 512) - 1; curve[i] = ((1 + amount) * x) / (1 + amount * Math.abs(x)); }
+  return curve;
+}
+
+/** Play a transmission through a VHF radio: narrow band, squashed dynamics, a little clipping, hiss and mic clicks. */
+async function play(blob: Blob, who: "Pilot" | "Ground"): Promise<void> {
+  try {
+    ctx ??= new AudioContext();
+    await ctx.resume();
+    const c = ctx;
+    const voice = await c.decodeAudioData(await blob.arrayBuffer());
+    const start = c.currentTime + 0.12;
+    const end = start + voice.duration;
+    const pilot = who === "Pilot"; // the pilot is farther away: noisier, more clipped
+
+    const out = c.createGain(); out.gain.value = 0.9;
+    const bus = c.createBiquadFilter(); bus.type = "highpass"; bus.frequency.value = 180;
+    const low = c.createBiquadFilter(); low.type = "lowpass"; low.frequency.value = pilot ? 4500 : 5000;
+    const mid = c.createBiquadFilter(); mid.type = "peaking"; mid.frequency.value = 1500; mid.gain.value = 2.4; mid.Q.value = 0.8;
+    const drive = c.createWaveShaper(); drive.curve = distortion(pilot ? 4 : 2.4); drive.oversample = "2x";
+    const squash = c.createDynamicsCompressor();
+    squash.threshold.value = -32; squash.ratio.value = 6; squash.attack.value = 0.003; squash.release.value = 0.12; squash.knee.value = 6;
+    bus.connect(low).connect(mid).connect(drive).connect(squash).connect(out).connect(c.destination);
+
+    const src = c.createBufferSource(); src.buffer = voice;
+    const pre = c.createGain(); pre.gain.value = 1.3; // push into the compressor and shaper
+    src.connect(pre).connect(bus);
+    src.start(start);
+
+    // Hiss under the whole transmission, through the same narrow band.
+    const hissLen = Math.ceil(voice.duration + 0.5) * c.sampleRate;
+    const hissBuf = c.createBuffer(1, hissLen, c.sampleRate);
+    const h = hissBuf.getChannelData(0);
+    for (let i = 0; i < hissLen; i++) h[i] = Math.random() * 2 - 1;
+    const hiss = c.createBufferSource(); hiss.buffer = hissBuf;
+    const hissGain = c.createGain(); hissGain.gain.value = pilot ? 0.018 : 0.009;
+    hiss.connect(hissGain).connect(bus);
+    hiss.start(start - 0.08); hiss.stop(end + 0.2);
+
+    click(c, bus, start - 0.07, 0.15);   // key up
+    click(c, bus, end + 0.02, 0.11);    // key down
+
+    await new Promise<void>((resolve) => setTimeout(resolve, (end + 0.3 - c.currentTime) * 1000));
+  } catch {
+    // No Web Audio: play it clean rather than not at all.
+    await new Promise<void>((resolve) => {
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      const done = () => { URL.revokeObjectURL(url); resolve(); };
+      audio.onended = done; audio.onerror = done;
+      audio.play().catch(done);
+    });
+  }
 }
 
 /** Radio transmissions play one at a time, in order. Audio is fetched ahead so each line follows the last without a gap. */
-export function makeSpeaker(onLine: (who: "Pilot" | "Ground", text: string) => void, onOffline: () => void) {
+/** `pilotVoice` is this flight's pilot: an index into the backend's pilot voices. */
+export function makeSpeaker(pilotVoice: number, onLine: (who: "Pilot" | "Ground", text: string) => void, onOffline: () => void) {
   const pending = new Map<string, Promise<Blob | null>>();
   const key = (who: string, text: string) => `${who}|${text}`;
   return {
     /** Start generating a line's audio early. */
-    prefetch(who: "Pilot" | "Ground", text: string) { pending.set(key(who, text), fetchAudio(who === "Pilot" ? "pilot" : "atc", text)); },
+    prefetch(who: "Pilot" | "Ground", text: string) { pending.set(key(who, text), fetchAudio(who === "Pilot" ? "pilot" : "atc", text, pilotVoice)); },
     async say(who: "Pilot" | "Ground", text: string) {
       const k = key(who, text);
-      const audio = await (pending.get(k) ?? fetchAudio(who === "Pilot" ? "pilot" : "atc", text));
+      const audio = await (pending.get(k) ?? fetchAudio(who === "Pilot" ? "pilot" : "atc", text, pilotVoice));
       pending.delete(k);
       onLine(who, text);
-      if (audio) await play(audio);
+      if (audio) await play(audio, who);
       else { onOffline(); await new Promise((r) => setTimeout(r, Math.min(6000, 600 + text.length * 55))); } // captions only, paced like speech
     },
   };

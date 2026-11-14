@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groundReply, pilotReadback, runRadioFlow, spokenCallsign, spokenRoute, type RadioDeps, type Taxi } from "./radio";
+import { AIRLINES, randomFlight, groundReply, pilotReadback, runRadioFlow, spokenCallsign, spokenRoute, type RadioDeps, type Taxi } from "./radio";
 
 const taxi = (o: Partial<Taxi> = {}): Taxi => ({ flight: "AC101", decision: "allow", gate: "G2", gate_name: "Gate 2", route: ["H1", "A", "D2", "Spur 2"], ...o });
 
@@ -7,6 +7,9 @@ describe("phraseology", () => {
   it("speaks callsigns and routes", () => {
     expect(spokenCallsign("AC101")).toBe("Air Canada one zero one");
     expect(spokenCallsign("XY9")).toBe("Xray Yankee niner");
+    expect(spokenCallsign("BA286")).toBe("British Airways two eight six");
+    expect(spokenCallsign("U2415")).toBe("easyJet four one five");
+    expect(spokenCallsign("WJ7")).toBe("WestJet seven");
     expect(spokenRoute(["H1", "A", "D2", "Spur 2"])).toBe("Hotel one, Alpha, Delta two");
   });
   it("clears, holds and refuses", () => {
@@ -45,5 +48,17 @@ describe("runRadioFlow", () => {
     const { d, heard } = deps(taxi({ decision: "needs_approval", route: [] }), "deny");
     await runRadioFlow("AC101", "G2", "Gate 2", d);
     expect(heard.join("\n")).toContain("unable runway crossing");
+  });
+});
+
+describe("randomFlight", () => {
+  it("picks a seeded airline and avoids flights already on the ground", () => {
+    const seq = [0, 0.001, 0.5, 0.2]; let i = 0;
+    const rand = () => seq[i++ % seq.length];
+    const first = randomFlight(new Set(), rand);
+    expect(first).toMatch(/^AC\d+$/);
+    i = 0;
+    expect(randomFlight(new Set([first]), rand)).not.toBe(first);
+    expect(Object.keys(AIRLINES).length).toBeGreaterThanOrEqual(20);
   });
 });

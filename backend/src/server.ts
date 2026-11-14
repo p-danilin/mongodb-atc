@@ -102,7 +102,7 @@ const server = http.createServer(async (req, res) => {
       for await (const chunk of req) raw += chunk;
       const b = raw ? JSON.parse(raw) : {};
       if ((b.speaker !== "pilot" && b.speaker !== "atc") || typeof b.text !== "string" || !b.text.trim() || b.text.length > 500) throw new HttpError(400, "bad_request", "speaker (pilot|atc) and text (1-500 chars) are required");
-      res.writeHead(200, { "content-type": "audio/mpeg" }).end(await speak(b.speaker, b.text));
+      res.writeHead(200, { "content-type": "audio/mpeg" }).end(await speak(b.speaker, b.text, typeof b.voice === "number" ? b.voice : 0));
     } catch (e: any) {
       if (e instanceof HttpError) json(res, e.status, { error: { code: e.code, message: e.message } });
       else if (e instanceof SyntaxError) json(res, 400, { error: { code: "bad_request", message: "body is not valid JSON" } });

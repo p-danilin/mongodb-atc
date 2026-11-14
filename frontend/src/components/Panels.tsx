@@ -3,7 +3,7 @@ import { PlaneTakeoffIcon, RotateCcwIcon, OctagonIcon, PlayIcon, ShieldAlertIcon
 import { api } from "../lib/api";
 import { redTeamControl, spawnControl } from "../lib/controls";
 import { callMcpTool } from "../lib/mcpClient";
-import { makeSpeaker, mcpTool, runRadioFlow, type RadioLine } from "../lib/radio";
+import { makeSpeaker, mcpTool, randomFlight, runRadioFlow, type RadioLine } from "../lib/radio";
 import { store, useSelector } from "../state/store";
 import type { ConnectionStatus } from "../lib/sync";
 import { Badge } from "@/components/ui/badge";
@@ -112,10 +112,11 @@ export function ScenarioCard({ gates }: { gates: { id: string; name: string }[] 
   /** Spawn the arrival holding at the exit, then play the radio exchange that clears it to taxi. */
   const spawnWithRadio = async () => {
     const gateName = gates.find((g) => g.id === gate)?.name ?? gate;
-    const v = await api.spawnFlight({ gate, hold: true });
+    const onGround = new Set(Object.values(store.getState().vehicles).map((v) => (v as { details?: { flight?: string } }).details?.flight ?? ""));
+    const v = await api.spawnFlight({ gate, hold: true, flight: randomFlight(onGround) });
     const flight = (v as { details?: { flight?: string } }).details?.flight;
     if (!flight) throw new Error("The server did not name the flight");
-    const speaker = makeSpeaker(log, () => setOffline(true));
+    const speaker = makeSpeaker(Math.floor(Math.random() * 3), log, () => setOffline(true)); // one of three pilots
     setOffline(false);
     // Fire and forget: the button frees as soon as the plane is on the map; the radio runs on.
     void runRadioFlow(flight, gate, gateName, {
