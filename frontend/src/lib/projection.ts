@@ -4,6 +4,8 @@ export interface Projection {
   /** Drawing area (without padding), in SVG units. */
   width: number;
   height: number;
+  /** Ground distance covered by one SVG unit, for scale bars. */
+  metersPerUnit: number;
   /** [minX, minY, width, height] for the SVG viewBox, padding included. */
   viewBox: [number, number, number, number];
   toSvg(p: Position): [number, number];
@@ -23,6 +25,7 @@ export function makeProjection(
   return {
     width,
     height,
+    metersPerUnit: 111_320 / scale,
     viewBox: [0, 0, width + 2 * padding, height + 2 * padding],
     toSvg: ([lon, lat]) => [padding + (lon - minLon) * k * scale, padding + (maxLat - lat) * scale],
     toLonLat: ([x, y]) => [minLon + (x - padding) / (k * scale), maxLat - (y - padding) / scale],

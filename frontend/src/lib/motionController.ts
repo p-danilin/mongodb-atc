@@ -13,6 +13,7 @@ export function createMotionController(store: Store, projection: Projection) {
   const tracks = new Map<string, Track>();
   const seen = new Map<string, Vehicle>();
   const els = new Map<string, SVGGElement>();
+  const labels = new Map<string, SVGGElement>();
   let raf = 0;
 
   const draw = (id: string, now: number) => {
@@ -21,6 +22,7 @@ export function createMotionController(store: Store, projection: Projection) {
     const s = sample(t, now);
     const [x, y] = projection.toSvg(s.position);
     el.setAttribute("transform", `translate(${x.toFixed(2)} ${y.toFixed(2)}) rotate(${s.heading.toFixed(1)})`);
+    labels.get(id)?.setAttribute("transform", `translate(${x.toFixed(2)} ${y.toFixed(2)})`);
     return s.animating;
   };
 
@@ -53,6 +55,10 @@ export function createMotionController(store: Store, projection: Projection) {
     /** Ref callback for a Vehicle sprite. */
     attach(id: string, el: SVGGElement | null) {
       if (el) { els.set(id, el); draw(id, performance.now()); } else els.delete(id);
+    },
+    /** Ref callback for a Vehicle's callsign label. It follows the position but does not rotate. */
+    attachLabel(id: string, el: SVGGElement | null) {
+      if (el) { labels.set(id, el); draw(id, performance.now()); } else labels.delete(id);
     },
     destroy() {
       unsub(); cancelAnimationFrame(raf);

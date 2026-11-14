@@ -24,6 +24,9 @@ describe("projection", () => {
     const back = p.toLonLat(p.toSvg(pt));
     expect(back[0]).toBeCloseTo(pt[0], 9); expect(back[1]).toBeCloseTo(pt[1], 9);
   });
+  it("reports ground metres per SVG unit", () => {
+    expect(makeProjection(bounds, { scale: 40000 }).metersPerUnit).toBeCloseTo(111320 / 40000);
+  });
   it("padding grows the viewBox and offsets points", () => {
     const q = makeProjection(bounds, { padding: 50 });
     expect(q.toSvg([-79.638, 43.688])).toEqual([50, 50]);
