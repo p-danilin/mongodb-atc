@@ -4,7 +4,10 @@ import path from "node:path";
 export const ROOT = path.resolve(import.meta.dirname, "../..");
 
 // Credentials live in the repo-level .env (gitignored). Real environment variables win.
-try { process.loadEnvFile(path.join(ROOT, ".env")); } catch { /* no .env: rely on the environment */ }
+// `.env.local` is where the ElevenLabs CLI writes its key; it wins over `.env`.
+for (const file of [".env.local", ".env"]) {
+  try { process.loadEnvFile(path.join(ROOT, file)); } catch { /* no such file: rely on the environment */ }
+}
 
 /** `docker compose up -d --wait` at the repo root starts this (a single-node replica set; change streams need one). */
 export const LOCAL_MONGODB_URI = "mongodb://localhost:27017/?replicaSet=rs0&directConnection=true";

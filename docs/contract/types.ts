@@ -250,6 +250,8 @@ export interface SpawnFlightRequest {
   gate: NodeId;
   /** Server generates one if omitted. */
   flight?: string;
+  /** Not in the original contract. True: the flight waits at the runway exit until its pilot asks for taxi. */
+  hold?: boolean;
 }
 
 export interface ResolveApprovalRequest {

@@ -1,7 +1,9 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { PlaneTakeoffIcon, RotateCcwIcon, OctagonIcon, PlayIcon, ShieldAlertIcon, XIcon } from "lucide-react";
 import { api } from "../lib/api";
 import { redTeamControl, spawnControl } from "../lib/controls";
+import { callMcpTool } from "../lib/mcpClient";
+import { makeSpeaker, mcpTool, runRadioFlow, type RadioLine } from "../lib/radio";
 import { store, useSelector } from "../state/store";
 import type { ConnectionStatus } from "../lib/sync";
 import { Badge } from "@/components/ui/badge";
@@ -97,10 +99,37 @@ export function ScenarioCard({ gates }: { gates: { id: string; name: string }[] 
   const [gate, setGate] = useState("G1");
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [radio, setRadio] = useState<RadioLine[]>([]);
+  const [offline, setOffline] = useState(false);
+  const nextLine = useRef(1);
   const spawn = spawnControl(useSelector((s) => s.run, (a, b) => a === b));
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true); setMsg(null);
     try { await fn(); } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
+  };
+  const log = (who: RadioLine["who"], text: string) => setRadio((l) => [...l.slice(-9), { id: nextLine.current++, who, text }]);
+
+  /** Spawn the arrival holding at the exit, then play the radio exchange that clears it to taxi. */
+  const spawnWithRadio = async () => {
+    const gateName = gates.find((g) => g.id === gate)?.name ?? gate;
+    const v = await api.spawnFlight({ gate, hold: true });
+    const flight = (v as { details?: { flight?: string } }).details?.flight;
+    if (!flight) throw new Error("The server did not name the flight");
+    const speaker = makeSpeaker(log, () => setOffline(true));
+    setOffline(false);
+    // Fire and forget: the button frees as soon as the plane is on the map; the radio runs on.
+    void runRadioFlow(flight, gate, gateName, {
+      ...speaker, note: (t) => log("System", t), tool: mcpTool,
+      waitForSupervisor: (f) => new Promise((resolve) => {
+        const off = store.onMessage((m) => {
+          if (m.type !== "ledger.appended" || m.data.event !== "approval.resolved") return;
+          void callMcpTool("get_flight_status", { flight: f }).then((t) => {
+            const supervisor = (() => { try { return JSON.parse(t).last_decision?.supervisor; } catch { return undefined; } })();
+            if (supervisor === "approve" || supervisor === "deny") { off(); resolve(supervisor); }
+          });
+        });
+      }),
+    }).catch((e) => log("System", `Radio failed: ${(e as Error).message}`));
   };
   return (
     <Card size="sm">
@@ -119,7 +148,7 @@ export function ScenarioCard({ gates }: { gates: { id: string; name: string }[] 
             </SelectContent>
           </Select>
           <WithReason reason={spawn.reason}>
-            <Button disabled={busy || !spawn.enabled} onClick={() => act(() => api.spawnFlight({ gate }))}>
+            <Button disabled={busy || !spawn.enabled} onClick={() => act(spawnWithRadio)}>
               <PlaneTakeoffIcon data-icon="inline-start" />Spawn flight
             </Button>
           </WithReason>
@@ -128,6 +157,16 @@ export function ScenarioCard({ gates }: { gates: { id: string; name: string }[] 
           </Button>
         </div>
         {msg && <p role="alert" className="text-sm text-destructive">{msg}</p>}
+        {offline && <p className="text-xs text-muted-foreground">Voice is offline (no ElevenLabs key on Brain), so the radio is captions only.</p>}
+        {radio.length > 0 && (
+          <ol className="flex flex-col gap-1 text-sm" aria-live="polite">
+            {radio.map((l) => (
+              <li key={l.id} className={l.who === "System" ? "font-mono text-xs text-muted-foreground" : undefined}>
+                {l.who !== "System" && <span className="font-medium">{l.who}: </span>}{l.text}
+              </li>
+            ))}
+          </ol>
+        )}
       </CardContent>
     </Card>
   );

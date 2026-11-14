@@ -9,6 +9,7 @@ import { Ledger } from "./ledger";
 import { gateId, handleMcp } from "./mcp";
 import { Sim } from "./sim";
 import { startRelay } from "./stream";
+import { speak } from "./tts";
 import { HttpError, World, loadGraph } from "./world";
 
 const database = await connect();
@@ -92,6 +93,20 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       console.error("mcp request failed:", e);
       if (!res.headersSent) json(res, 400, { jsonrpc: "2.0", error: { code: -32700, message: "Bad request" }, id: null });
+    }
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/voice/speak") {
+    try {
+      let raw = "";
+      for await (const chunk of req) raw += chunk;
+      const b = raw ? JSON.parse(raw) : {};
+      if ((b.speaker !== "pilot" && b.speaker !== "atc") || typeof b.text !== "string" || !b.text.trim() || b.text.length > 500) throw new HttpError(400, "bad_request", "speaker (pilot|atc) and text (1-500 chars) are required");
+      res.writeHead(200, { "content-type": "audio/mpeg" }).end(await speak(b.speaker, b.text));
+    } catch (e: any) {
+      if (e instanceof HttpError) json(res, e.status, { error: { code: e.code, message: e.message } });
+      else if (e instanceof SyntaxError) json(res, 400, { error: { code: "bad_request", message: "body is not valid JSON" } });
+      else { console.error("voice failed:", e); json(res, 500, { error: { code: "internal", message: "Internal error" } }); }
     }
     return;
   }
