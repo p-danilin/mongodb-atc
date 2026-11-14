@@ -242,8 +242,15 @@ export class World {
     });
   }
 
-  /** Where a flight is and what it is cleared for. */
+  /**
+   * Where a flight is and what it is cleared for. It waits its turn behind any change in progress, so a
+   * caller that asks the moment an approval lands sees the route that approval put the flight on.
+   */
   async flightStatus(callsign: string) {
+    return this.exclusive(() => this.statusOf(callsign));
+  }
+
+  private async statusOf(callsign: string) {
     const [id, flight] = this.find(callsign);
     const { vehicles, actions, approvals } = this.database.col;
     const [vehicle, last] = await Promise.all([
@@ -256,7 +263,7 @@ export class World {
     return {
       flight: flight.name, status: vehicle.status as string, gate: flight.gate, gate_name: this.node(flight.gate).name,
       near: this.node(this.nearest(vehicle.position.coordinates).node).name,
-      route: at ? this.names([at.leg, ...at.remaining]) : [],
+      route: at ? this.names([at.leg, ...at.remaining]) : (vehicle.route as EdgeId[]).map((e) => this.edge(e).name).filter((n, i, all) => n !== all[i - 1]),
       last_decision: last ? {
         action_id: last._id as string, decision: last.decision as string, policy_ids: last.policy_ids as string[], reason: last.reason as string,
         // For a `needs_approval` action: what the supervisor said, or "pending".

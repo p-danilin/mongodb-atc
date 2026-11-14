@@ -1,0 +1,127 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Wilco data model</title><style>
+:root{--ink:#0f172a;--muted:#64748b;--bg:#f4f6f3;--green:#00684a;--leaf:#00ed64;--navy:#001e2b}
+*{box-sizing:border-box;margin:0}
+body{font-family:system-ui,-apple-system,sans-serif;color:var(--ink)}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,monospace}
+.slide{width:1280px;height:720px;background:var(--bg);padding:36px 54px 30px;position:relative;overflow:hidden;display:flex;flex-direction:column}
+h1{font-size:40px;letter-spacing:-1px} h1 span{color:var(--green)}
+.cols{display:grid;grid-template-columns:1fr 1fr 1fr;column-gap:120px;margin-top:22px;flex:1}
+.col{display:flex;flex-direction:column}
+.col h2{font-size:17px;letter-spacing:.8px;text-transform:uppercase;color:var(--green);margin-bottom:16px;display:flex;align-items:baseline;gap:8px}
+.col h2 em{font-style:normal;font-weight:500;color:var(--muted);text-transform:none;letter-spacing:0;font-size:15px}
+.stack{display:flex;flex-direction:column;justify-content:space-between;flex:1}
+.card{background:#fff;border:2.5px solid var(--ink);border-radius:16px;padding:12px 14px;display:flex;align-items:center;gap:12px;position:relative;height:100px}
+.card svg{width:54px;height:54px;flex:none;color:var(--green)}
+.card .n{font-size:22px;font-weight:700}
+.card .c{font-size:15.5px;color:var(--muted);margin-top:2px;line-height:1.2}
+.card .b{position:absolute;right:10px;top:-13px;background:var(--navy);color:var(--leaf);font:700 12.5px ui-monospace,Menlo,monospace;padding:4px 9px;border-radius:999px}
+.card.hub{border-color:var(--green);background:#e3fcf0;border-width:3.5px}
+.runs{margin-top:22px;background:var(--navy);color:#fff;border-radius:16px;padding:11px 18px;display:flex;align-items:center;gap:14px;font-size:17px}
+.runs svg{width:34px;height:34px;color:var(--leaf);flex:none}
+.runs b{color:var(--leaf);font-family:ui-monospace,Menlo,monospace}
+.runs span{color:#cfe3dc}
+#wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#wires text{font:600 13.5px ui-monospace,Menlo,monospace;fill:var(--green);paint-order:stroke;stroke:var(--bg);stroke-width:5px}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <!-- pilot: captain with hat -->
+    <symbol id="i-pilot" viewBox="0 0 120 120">
+      <path d="M14 120 Q14 86 60 86 Q106 86 106 120 Z" fill="#1e293b"/>
+      <path d="M52 86 L60 100 L68 86 Z" fill="#fff"/><path d="M57 92 L60 110 L63 92 Z" fill="#0f172a"/>
+      <rect x="20" y="97" width="18" height="4" rx="2" fill="#facc15"/><rect x="20" y="104" width="18" height="4" rx="2" fill="#facc15"/>
+      <rect x="82" y="97" width="18" height="4" rx="2" fill="#facc15"/><rect x="82" y="104" width="18" height="4" rx="2" fill="#facc15"/>
+      <circle cx="60" cy="60" r="25" fill="#f1c7a0"/>
+      <circle cx="51" cy="60" r="3" fill="#0f172a"/><circle cx="69" cy="60" r="3" fill="#0f172a"/>
+      <path d="M50 71 Q60 79 70 71" fill="none" stroke="#0f172a" stroke-width="3" stroke-linecap="round"/>
+      <path d="M27 40 Q29 12 60 12 Q91 12 93 40 Z" fill="#1e293b"/>
+      <rect x="27" y="37" width="66" height="9" fill="#facc15"/>
+      <path d="M24 46 L96 46 Q98 46 96 49 Q60 60 24 49 Q22 46 24 46 Z" fill="#0f172a"/>
+      <path d="M60 18 l3 6 6 1 -4.5 4 1 6 -5.5 -3 -5.5 3 1 -6 -4.5 -4 6 -1 Z" fill="#facc15"/>
+    </symbol>
+    <!-- agent: robot with headset -->
+    <symbol id="i-robot" viewBox="0 0 120 120">
+      <line x1="60" y1="20" x2="60" y2="8" stroke="#0f172a" stroke-width="4"/><circle cx="60" cy="7" r="6" fill="#00ed64" stroke="#0f172a" stroke-width="3"/>
+      <rect x="12" y="46" width="12" height="24" rx="5" fill="#0f172a"/><rect x="96" y="46" width="12" height="24" rx="5" fill="#0f172a"/>
+      <rect x="22" y="20" width="76" height="66" rx="18" fill="#e2e8f0" stroke="#0f172a" stroke-width="4"/>
+      <rect x="32" y="34" width="56" height="26" rx="13" fill="#0f172a"/>
+      <circle cx="47" cy="47" r="7" fill="#00ed64"/><circle cx="73" cy="47" r="7" fill="#00ed64"/>
+      <path d="M46 70 H74" stroke="#0f172a" stroke-width="4" stroke-linecap="round"/>
+      <path d="M18 70 Q18 96 44 94" fill="none" stroke="#0f172a" stroke-width="4" stroke-linecap="round"/><rect x="42" y="89" width="14" height="10" rx="5" fill="#0f172a"/>
+      <path d="M30 120 Q30 100 60 100 Q90 100 90 120 Z" fill="#94a3b8" stroke="#0f172a" stroke-width="4"/>
+    </symbol>
+    <!-- policy gate: shield -->
+    <symbol id="i-shield" viewBox="0 0 120 120">
+      <path d="M60 6 L104 22 V58 Q104 94 60 114 Q16 94 16 58 V22 Z" fill="#e3fcf0" stroke="#00684a" stroke-width="6" stroke-linejoin="round"/>
+      <path d="M38 60 L54 76 L84 42" fill="none" stroke="#00684a" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-yes" viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" fill="#fff" stroke="#00684a" stroke-width="8"/><path d="M36 62 L53 79 L86 42" fill="none" stroke="#00684a" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-no" viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" fill="#fff" stroke="#b91c1c" stroke-width="8"/><path d="M40 40 L80 80 M80 40 L40 80" fill="none" stroke="#b91c1c" stroke-width="11" stroke-linecap="round"/></symbol>
+    <!-- supervisor: person with headset -->
+    <symbol id="i-human" viewBox="0 0 120 120">
+      <circle cx="60" cy="60" r="52" fill="#fff" stroke="#b45309" stroke-width="8"/>
+      <path d="M30 100 Q30 74 60 74 Q90 74 90 100" fill="#b45309"/>
+      <circle cx="60" cy="50" r="19" fill="#f1c7a0"/>
+      <path d="M38 52 Q38 26 60 26 Q82 26 82 52" fill="none" stroke="#0f172a" stroke-width="5"/>
+      <rect x="33" y="46" width="9" height="16" rx="4" fill="#0f172a"/><rect x="78" y="46" width="9" height="16" rx="4" fill="#0f172a"/>
+      <path d="M82 60 Q82 72 68 70" fill="none" stroke="#0f172a" stroke-width="4" stroke-linecap="round"/>
+    </symbol>
+    <!-- atlas chips -->
+    <symbol id="i-id" viewBox="0 0 64 64"><rect x="6" y="12" width="52" height="40" rx="7" fill="none" stroke="currentColor" stroke-width="4"/><circle cx="22" cy="28" r="6" fill="currentColor"/><path d="M12 44 Q12 36 22 36 Q32 36 32 44" fill="currentColor"/><path d="M38 26 H50 M38 34 H50 M38 42 H46" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></symbol>
+    <symbol id="i-rules" viewBox="0 0 64 64"><path d="M16 6 H40 L52 18 V58 H16 Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M40 6 V18 H52" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M23 30 l4 4 7 -8 M23 44 l4 4 7 -8" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M40 32 H46 M40 46 H46" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 64 64"><path d="M32 58 Q12 34 12 24 A20 20 0 0 1 52 24 Q52 34 32 58 Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><circle cx="32" cy="24" r="7" fill="currentColor"/></symbol>
+    <symbol id="i-ledger" viewBox="0 0 64 64"><rect x="12" y="6" width="42" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="4"/><path d="M22 6 V58" stroke="currentColor" stroke-width="4"/><path d="M30 20 H46 M30 31 H46 M30 42 H40" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></symbol>
+    <!-- slide 2 extras -->
+    <symbol id="i-stream" viewBox="0 0 64 64"><path d="M6 22 Q16 10 26 22 T46 22 T58 20 M6 36 Q16 24 26 36 T46 36 T58 34 M6 50 Q16 38 26 50 T46 50 T58 48" fill="none" stroke="#00684a" stroke-width="4.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 64 64"><circle cx="32" cy="34" r="22" fill="none" stroke="#00684a" stroke-width="4.5"/><path d="M32 20 V34 L42 40" fill="none" stroke="#00684a" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 6 H40" stroke="#00684a" stroke-width="4.5" stroke-linecap="round"/></symbol>
+  
+    <symbol id="i-plane" viewBox="0 0 64 64"><path d="M32 4 L37 24 L58 36 V42 L37 37 L35 52 L42 58 V61 L32 58 L22 61 V58 L29 52 L27 37 L6 42 V36 L27 24 Z" fill="currentColor"/></symbol>
+    <symbol id="i-graph" viewBox="0 0 64 64"><path d="M14 16 L50 16 M14 16 L14 48 M14 48 L50 48 M50 16 L50 48" stroke="currentColor" stroke-width="4" fill="none"/><circle cx="14" cy="16" r="7" fill="currentColor"/><circle cx="50" cy="16" r="7" fill="currentColor"/><circle cx="14" cy="48" r="7" fill="currentColor"/><circle cx="50" cy="48" r="7" fill="currentColor"/></symbol>
+    <symbol id="i-road" viewBox="0 0 64 64"><path d="M20 58 L26 6 M44 58 L38 6" stroke="currentColor" stroke-width="5" stroke-linecap="round" fill="none"/><path d="M32 12 V20 M32 28 V36 M32 44 V52" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></symbol>
+    <symbol id="i-closed" viewBox="0 0 64 64"><circle cx="32" cy="32" r="24" fill="none" stroke="currentColor" stroke-width="5"/><path d="M15 15 L49 49" stroke="currentColor" stroke-width="5" stroke-linecap="round"/></symbol>
+    <symbol id="i-person" viewBox="0 0 64 64"><circle cx="32" cy="22" r="11" fill="currentColor"/><path d="M10 58 Q10 38 32 38 Q54 38 54 58 Z" fill="currentColor"/><path d="M40 50 l5 5 9 -11" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 64 64"><path d="M32 4 L56 13 V32 Q56 51 32 61 Q8 51 8 32 V13 Z" fill="none" stroke="currentColor" stroke-width="5" stroke-linejoin="round"/><path d="M20 32 L29 41 L45 23" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 64 64"><path d="M14 60 V6" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><path d="M14 8 H52 L42 20 L52 32 H14 Z" fill="currentColor"/></symbol>
+  </defs>
+</svg><section class="slide" id="dm">
+  <h1>Data model: <span>10 collections</span> in MongoDB Atlas</h1>
+  <div class="cols">
+    <div class="col"><h2>Airport <em>GeoJSON</em></h2><div class="stack">
+      <div class="card" id="nodes"><svg><use href="#i-graph"/></svg><div><div class="n mono">nodes</div><div class="c">gates, junctions</div></div><span class="b">2dsphere</span></div>
+      <div class="card" id="edges"><svg><use href="#i-road"/></svg><div><div class="n mono">edges</div><div class="c">taxiways, runway</div></div><span class="b">2dsphere</span></div>
+      <div class="card" id="zones"><svg><use href="#i-closed"/></svg><div><div class="n mono">zones</div><div class="c">closures</div></div><span class="b">TTL index</span></div>
+    </div></div>
+    <div class="col"><h2>Who and what <em>live state</em></h2><div class="stack">
+      <div class="card" id="identities"><svg><use href="#i-id"/></svg><div><div class="n mono">identities</div><div class="c">agent, pilots, supervisor</div></div><span class="b">clearances</span></div>
+      <div class="card" id="vehicles"><svg><use href="#i-plane"/></svg><div><div class="n mono">vehicles</div><div class="c">aircraft positions</div></div><span class="b">change stream</span></div>
+      <div class="card" id="policies"><svg><use href="#i-rules"/></svg><div><div class="n mono">policies</div><div class="c">7 rules as documents</div></div><span class="b">read per decision</span></div>
+    </div></div>
+    <div class="col"><h2>Audit trail <em>insert-only</em></h2><div class="stack">
+      <div class="card" id="approvals"><svg><use href="#i-person"/></svg><div><div class="n mono">approvals</div><div class="c">a human's answer</div></div><span class="b">unique</span></div>
+      <div class="card hub" id="actions"><svg><use href="#i-check"/></svg><div><div class="n mono">actions</div><div class="c">every decision</div></div><span class="b">$jsonSchema</span></div>
+      <div class="card" id="ledger"><svg><use href="#i-ledger"/></svg><div><div class="n mono">ledger</div><div class="c">ordered event log</div></div><span class="b">unique (run, n)</span></div>
+    </div></div></div>
+  <div class="runs"><svg><use href="#i-flag"/></svg><b style="font-size:20px">runs</b><span>Every vehicle, action, approval and ledger entry carries a <b>run_id</b>. Status <b>halted</b> is the kill switch.</span></div>
+  <svg id="wires"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#00684a"/></marker></defs></svg>
+</section>
+<script>
+const slide=document.getElementById('dm').getBoundingClientRect(), svg=document.getElementById('wires');
+const NS='http://www.w3.org/2000/svg';
+const box=id=>{const r=document.getElementById(id).getBoundingClientRect();return {l:r.left-slide.left,r:r.right-slide.left,t:r.top-slide.top,b:r.bottom-slide.top,cx:r.left-slide.left+r.width/2,cy:r.top-slide.top+r.height/2}};
+function wire(x1,y1,x2,y2,label,dash,lx,ly){
+  const p=document.createElementNS(NS,'path');
+  p.setAttribute('d',`M${x1} ${y1} L${x2} ${y2}`);p.setAttribute('stroke','#00684a');p.setAttribute('stroke-width','3');p.setAttribute('fill','none');p.setAttribute('marker-end','url(#ah)');
+  if(dash)p.setAttribute('stroke-dasharray','7 6');svg.appendChild(p);
+  if(label){const t=document.createElementNS(NS,'text');t.setAttribute('x',lx??(x1+x2)/2);t.setAttribute('y',ly??(y1+y2)/2-11);t.setAttribute('text-anchor','middle');t.textContent=label;svg.appendChild(t);}
+}
+const n=box('nodes'),e=box('edges'),z=box('zones'),i=box('identities'),v=box('vehicles'),p=box('policies'),ap=box('approvals'),ac=box('actions'),l=box('ledger');
+wire(e.cx-70,e.t-2,n.cx-70,n.b+4,'from / to',false,e.cx+6,(e.t+n.b)/2+5);
+wire(z.cx-70,z.t-2,e.cx-70,e.b+4,'$geoIntersects',true,z.cx+26,(z.t+e.b)/2+5);
+wire(v.l-2,v.cy,e.r+4,e.cy,'route');
+wire(v.cx-70,v.t-2,i.cx-70,i.b+4,'identity_id',false,v.cx+14,(v.t+i.b)/2+5);
+wire(ac.l-2,ac.cy-24,i.r+4,i.cy+16,'agent_id',false,(ac.l+i.r)/2+34,(ac.cy+i.cy)/2-30);
+wire(ac.l-2,ac.cy,v.r+4,v.cy,'vehicle_id');
+wire(ac.l-2,ac.cy+24,p.r+4,p.cy-16,'policy_ids',false,(ac.l+p.r)/2+40,(ac.cy+p.cy)/2+40);
+wire(ap.cx-70,ap.b+2,ac.cx-70,ac.t-5,'resolves',false,ap.cx-8,(ap.b+ac.t)/2+5);
+wire(l.cx-70,l.t-2,ac.cx-70,ac.b+5,'ref',false,l.cx-38,(l.t+ac.b)/2+5);
+</script></body></html>
