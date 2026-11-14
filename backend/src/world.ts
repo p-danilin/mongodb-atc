@@ -148,7 +148,7 @@ export class World {
     );
     const doc: Doc = {
       _id: id, kind: "aircraft", identity_id: identity, run_id: this.run._id,
-      position: from.location, heading: 125, route: [], status: "idle", ts: new Date(), details: { flight: name, gate },
+      position: from.location, heading: 235, route: [], status: "idle", ts: new Date(), details: { flight: name, gate },
     };
     await this.database.col.vehicles.insertOne(doc);
     this.flights.set(id, { name, gate });

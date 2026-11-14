@@ -38,7 +38,7 @@
         "location": {
           "type": "Point",
           "coordinates": [
-            -79.6335,
+            -79.6305,
             43.678
           ]
         }
@@ -311,12 +311,12 @@
               43.678
             ],
             [
-              -79.6335,
+              -79.6305,
               43.678
             ]
           ]
         },
-        "length_m": 201
+        "length_m": 442
       },
       {
         "_id": "E2",
@@ -328,7 +328,7 @@
           "type": "LineString",
           "coordinates": [
             [
-              -79.6335,
+              -79.6305,
               43.678
             ],
             [
@@ -337,7 +337,7 @@
             ]
           ]
         },
-        "length_m": 643
+        "length_m": 402
       },
       {
         "_id": "E3",
@@ -531,18 +531,18 @@
       {
         "_id": "E12",
         "from": "RH1",
-        "to": "P3",
+        "to": "P2",
         "kind": "taxiway",
         "name": "H1",
         "geometry": {
           "type": "LineString",
           "coordinates": [
             [
-              -79.6335,
+              -79.6305,
               43.678
             ],
             [
-              -79.63,
+              -79.634,
               43.6762
             ]
           ]
@@ -955,11 +955,11 @@
       "position": {
         "type": "Point",
         "coordinates": [
-          -79.6335,
+          -79.6305,
           43.678
         ]
       },
-      "heading": 125,
+      "heading": 235,
       "route": [],
       "status": "idle",
       "ts": "2026-11-14T15:00:00Z",

@@ -10,12 +10,12 @@ const noRunway = { avoidKinds: ["runway", "runway_crossing"] as const };
 describe("findRoute", () => {
   it("takes the shortest path from the runway exit to a gate", () => {
     expect(ids(findRoute(graph, "RX1", "G1", { avoidKinds: [...noRunway.avoidKinds] }))).toEqual(["E4", "E5", "E14", "E21"]);
-    expect(ids(findRoute(graph, "RH1", "G2", { avoidKinds: [...noRunway.avoidKinds] }))).toEqual(["E12", "E15", "E22"]);
+    expect(ids(findRoute(graph, "RH1", "G1", { avoidKinds: [...noRunway.avoidKinds] }))).toEqual(["E12", "E14", "E21"]);
   });
 
   it("cannot reach the north gates without the runway crossing", () => {
     expect(findRoute(graph, "RX1", "G5", { avoidKinds: [...noRunway.avoidKinds] })).toBeNull();
-    expect(ids(findRoute(graph, "RH1", "G5"))).toEqual(["E12", "E7", "E25", "E26", "E28"]);
+    expect(ids(findRoute(graph, "RH1", "G5"))).toEqual(["E12", "E6", "E7", "E25", "E26", "E28"]);
   });
 
   it("gates are not linked to each other", () => {
@@ -24,12 +24,12 @@ describe("findRoute", () => {
   });
 
   it("leaves the runway by a high-speed exit onto the parallel taxiway", () => {
-    const first = findRoute(graph, "RH1", "P3", { avoidKinds: [...noRunway.avoidKinds] })!;
+    const first = findRoute(graph, "RH1", "P2", { avoidKinds: [...noRunway.avoidKinds] })!;
     expect(first.map((s) => s.edge.name)).toEqual(["H1"]);
   });
 
   it("routes around avoided edges via the taxilane", () => {
-    expect(ids(findRoute(graph, "RH1", "G2", { avoidKinds: [...noRunway.avoidKinds], avoidEdges: ["E6", "E15"] }))).toEqual(["E12", "E7", "E8", "E16", "E19", "E22"]);
+    expect(ids(findRoute(graph, "RH1", "G1", { avoidKinds: [...noRunway.avoidKinds], avoidEdges: ["E14"] }))).toEqual(["E12", "E6", "E15", "E18", "E21"]);
   });
 
   it("travels edges backwards when needed", () => {
@@ -40,8 +40,8 @@ describe("findRoute", () => {
 
 describe("orientRoute", () => {
   it("recovers direction from the edge ids and the end node", () => {
-    const path = findRoute(graph, "RH1", "G2", { avoidKinds: [...noRunway.avoidKinds], avoidEdges: ["E6", "E15"] })!;
-    const again = orientRoute(graph, path.map((s) => s.edge._id), "G2")!;
+    const path = findRoute(graph, "RH1", "G1", { avoidKinds: [...noRunway.avoidKinds], avoidEdges: ["E14"] })!;
+    const again = orientRoute(graph, path.map((s) => s.edge._id), "G1")!;
     expect(again.map((s) => s.forward)).toEqual(path.map((s) => s.forward));
   });
 
